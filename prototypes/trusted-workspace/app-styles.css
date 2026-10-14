@@ -1,0 +1,11 @@
+/* Persistence feedback extends, rather than replaces, the accepted Command/Inspect UI. */
+.save-bar{padding:9px 18px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px;align-items:center;flex-shrink:0}
+.save-bar [data-state=saved]{color:var(--accent)}
+.save-bar [data-state=error]{color:#ffbb95}
+html[data-theme=light] .save-bar [data-state=error]{color:#873a19}
+.save-bar button{padding:5px 9px;min-height:30px;font-size:12px}
+.save-bar p{margin:0;flex-basis:100%;font-size:11px;line-height:1.4}
+.save-bar p:empty{display:none}
+[hidden]{display:none!important}
+.editor .code-wrap{min-height:90px}
+.editor{overflow:auto}

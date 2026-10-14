@@ -1,0 +1,15 @@
+{
+  "accepted_source_manifest_sha256": "5203b226bd07d32e4148b0ee1e404618d406c1515615d9fb892e4e13ca374893",
+  "source_snapshot": "accepted P3-APP-1 poc-app, 2026-10-14",
+  "source_sha256": {
+    "index.html": "eeb42675b06cfff528e1f05fdf34407e7a3e663f228bcc712cbe9b4fb42e1878",
+    "app.js": "0adca410b68841cd681282cb1ddcfa96c84c1f926dfdf297ce2a02cb94408c9f",
+    "persistence.js": "ea8a6a96dc4b46c66011c414189647ddd5635a3dd50549b0bafe1c0f9fb9c300",
+    "styles.css": "3b727fbdf5fe6bb61d2009eaac5b0f890fcba28230f8d2167f38ad139105bf7c",
+    "app-styles.css": "8d562a9fe38cda92e76d85ff3160f5ef2847babc2496c6504d5bfaf8cd6eb3d2",
+    "runtime.py": "b92defecf1f148ece72e4d2f5c3badee836453885029fbb64c695e8b6a409ac6",
+    "chrome_pipe.py": "e6a9d874abb55ffb9cf0e4569d15d1fae092020eddcc900b7b16e334f7ebcb46",
+    "test_app.py": "1f566fc76eadb5571c498a50b472c2ce2b4bd4184648bff0108673601747540a",
+    "test_themis_r1.py": "3900a01c77e9c8dc5c9e8385da071cfeb32b783544295f935b771dd5b833d845"
+  }
+}
