@@ -17,4 +17,8 @@ coverage is claimed here.
 The experimental [ENGINE-1 fixed-smoke controller](prototypes/docker-engine/README.md)
 has mocked unit tests only in CI; it is not a safe edited-code runner and CI does not run Docker.
 
+A separate [edited-Python leaf experiment](prototypes/docker-engine/EDITED-RUNNER.md)
+reuses that controller for `submit(source, "sum-array-v1")`. It has code/mock tests,
+no browser wiring or host fallback, and is not a tamper-resistant judge or public service.
+
 Licensed under [Apache-2.0](LICENSE).

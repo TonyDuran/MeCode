@@ -1,5 +1,10 @@
 # ENGINE-1 fixed-command controller (code-only prototype)
 
+This document describes the original fixed-smoke CLI and its review boundary.
+The separate [experimental edited-source leaf](EDITED-RUNNER.md) now reuses this
+lifecycle with bounded stdin; it does not widen the fixed-smoke CLI. Its live trials
+belong to the coordinator's existing approved session, not this denied profile.
+
 Self-authored by Talos. This is not a learner-code runner, an accepted isolation
 engine, or independent engineering/security/QA approval. Run/Submit remain disabled.
 This Linux-only PoC requires a local rootless Docker daemon for the invoking user;
