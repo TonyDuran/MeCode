@@ -89,7 +89,34 @@ def generate():
         guard.close()
 
 
+def render_existing():
+    """Presentation-only rebuild; preserve fixture bytes and historical receipts."""
+    identity_check()
+    text = (ROOT/'fixture-evidence.json').read_text()
+    contract_source = (ROOT/'evidence-contract.js').read_text()
+    prefix = "'use strict';\nconst EVIDENCE_CONTRACT = Object.freeze("
+    if not contract_source.startswith(prefix) or not contract_source.endswith(');\n'):
+        raise RuntimeError('Invalid evidence contract')
+    contract = json.loads(contract_source[len(prefix):-3])
+    if contract != {'sha256': hashlib.sha256(text.encode()).hexdigest(),
+                    'judge_revision': REVISION, 'source_sha256': HASHES}:
+        raise RuntimeError('Existing fixture identity differs; no page published')
+    template = (ROOT/'workspace.html.in').read_text()
+    if template.count('@@EVIDENCE@@') != 1 or any(c in text for c in '<>&'):
+        raise RuntimeError('Invalid template or unescaped evidence')
+    page = template.replace('@@EVIDENCE@@', text)
+    if max(len(text.encode()), len(page.encode())) > CAP:
+        raise RuntimeError('Static artifact exceeds 256 KiB')
+    (ROOT/'index.html').write_text(page)
+    print(json.dumps({'mode': 'render-existing; no fixture launch',
+                      'fixture_sha256': contract['sha256'],
+                      'page_sha256': hashlib.sha256(page.encode()).hexdigest()}))
+
+
 if __name__ == '__main__':
-    if len(sys.argv) != 1:
-        raise SystemExit('No arguments accepted; fixed fixtures and case only')
-    generate()
+    if sys.argv[1:] == ['--render-existing']:
+        render_existing()
+    elif not sys.argv[1:]:
+        generate()
+    else:
+        raise SystemExit('Usage: generate.py [--render-existing]; fixed evidence only')

@@ -6,8 +6,15 @@ affected Talos review, Themis verification and PM final-binding confirmation
 remain pending. No commit/push/PR, merge, hosted CI success or release is claimed.
 This is a headless external-Chrome workspace with static fixed-fixture evidence.
 It is NOT a bundled app, a live submission engine, or a safe arbitrary-code judge.
-Run/Submit remain disabled: “Edited code is not run; isolation unavailable.”
+Run/Submit remain semantically disabled with a persistent associated notice:
+“Run and Submit are unavailable in this prototype. Live judging is not integrated
+or verified. Edit your draft; check save status above. It has not been judged.”
 Fixture success is never saved as learner progress or a verdict on a draft.
+The copy does not promise saving: when corrupt state blocks saving, the live save
+status above the notice says so. At 1024x768 the editor grid row floors at its
+content height (`minmax(min-content,1fr)`), so the corrupt-state feedback and the
+whole notice are readable on fresh reopen without inner scrolling
+(`test_engine_unavailable.BrowserCorruptLayout`, both themes).
 
 ## Boundary and encoding
 
@@ -107,7 +114,10 @@ PROVENANCE.json binds the accepted P3-APP-1 source manifest and exact original
 hash of each source-only input. No profiles, logs, historical result dataset,
 accepted-ui snapshots, seals or old evidence are copied into this prototype.
 
-Byte-identical copies: persistence.js, styles.css, app-styles.css.
+Byte-identical copies from the accepted source: persistence.js, styles.css.
+app-styles.css additionally gives the persistent execution notice readable theme
+text, prevents its container from shrinking, and reserves editor row space so
+wrapped copy is not clipped by the recorded inspector (ENGINE-UNAVAILABLE-UX-1).
 Adaptations:
 - index.html → workspace.html.in: fresh fixture labels, honest disabled-execution
   note, inert evidence slot and validation scripts; original layout retained.
@@ -135,13 +145,13 @@ comparison and workflow/local-command verification, and PM final-binding
 confirmation are still required for this revision. No commit/push/PR yet.
 
 The workflow adds Chrome-free workspace inventory/member verification and only
-these two selected static tests (run from this prototype directory with a fresh
+the two existing boundary tests plus ENGINE-UNAVAILABLE-UX-1 static tests (run from this prototype directory with a fresh
 external `MECODE_LOCAL_STATE` under `RUNNER_TEMP`):
 
     python3 -B inventory.py
     sha256sum -c SOURCE-SHA256.txt
     sha256sum -c ARTIFACT-SHA256.txt
-    python3 -B -W error -m unittest -v test_evidence.StaticBoundary.test_browser_has_no_execution_or_native_transport test_evidence.StaticBoundary.test_generator_identity_failure_before_any_launch
+    python3 -B -W error -m unittest -v test_evidence.StaticBoundary.test_browser_has_no_execution_or_native_transport test_evidence.StaticBoundary.test_generator_identity_failure_before_any_launch test_engine_unavailable.StaticNotice
 
 This is inventory/static boundary coverage, not renderer/persistence integration
 coverage. Browser rejection/rendering/freshness, forced events, real persistence,
@@ -158,7 +168,42 @@ SIGTERM pass over the observed child tree, not a confirmed/escalating security
 boundary. Normal QA shutdown uses Browser.close and checks direct browser exit;
 this does not resolve R2 or prove arbitrary-child termination safety.
 
-Rollback: close only this task's browsers first, back up wanted drafts/quarantine,
+## ENGINE-UNAVAILABLE-UX-1 candidate (review/independent QA pending)
+
+This presentation-only slice replaces the execution explanation without changing
+app.js, persistence.js, evidence validation, runtime or judge/controller code.
+The notice is ordinary persistent text, not an alert or tooltip; existing
+aria-describedby associates it with both native disabled buttons and the draft.
+Save acknowledgement remains separate and completion-gated, not promised by the
+notice. No daemon outage, engine check, isolation guarantee or learner verdict.
+
+To rebuild only presentation while retaining the exact existing fixture bytes,
+contract and historical local receipt, use `python3 -B generate.py --render-existing`
+then `python3 -B inventory.py --write`. This verifies pinned source/fixture digest
+and escapes/caps before writing only index.html; it launches no fixtures and does
+not refresh their timestamp. An expired fixture still fails closed. Default
+`generate.py` continues to generate new evidence only when separately intended.
+PROVENANCE.json remains historical accepted-source provenance, not this candidate's
+manifest. No historical receipt/profile is rewritten or imported for this slice.
+
+`python3 -B -W error test_engine_unavailable.py` adds focused static and headless
+regressions: browser AX description/disabled state, both themes at 1440x900 and
+1024x768, actual mouse/keyboard and forced DOM actions (including QA removal of
+disabled), unchanged draft envelope/fixture inspector/targets, fresh-process exact
+reopen and genuine save abort/retry with visible feedback. Use a fresh task-owned
+state path; its ux profile refuses reuse. Reports/captures remain outside the repo.
+Chrome Unix socket paths require short QA TMPDIR paths; a task-local QA environment
+wrapper may shorten only that path, without changing sandbox flags or host settings.
+The new static suite is included in the Chrome-free workflow command above.
+Headed/accessibility assistive-technology checks and hosted CI are not claimed.
+This candidate needs Talos review and independent Themis QA before Metis acceptance;
+it does not satisfy ENGINE-1, SLICE-1, DESIGN-CONFIRMED or release.
+
+Rollback this slice by restoring only its changed files to the base revision and
+removing its new test (after preserving wanted task evidence). No database/schema
+migration or draft rollback is needed.
+
+Rollback of the whole prototype: close only this task's browsers first, back up wanted drafts/quarantine,
 then remove this new prototype directory. Separately remove only its dedicated
 external state directory if draft deletion is intended. Do not touch accepted
 PoCs, merged trusted-judge, other profiles/processes or shared host resources.

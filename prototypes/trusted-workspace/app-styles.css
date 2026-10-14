@@ -9,3 +9,9 @@ html[data-theme=light] .save-bar [data-state=error]{color:#873a19}
 [hidden]{display:none!important}
 .editor .code-wrap{min-height:90px}
 .editor{overflow:auto}
+/* Persistent explanation, independent of live save feedback, in both themes. */
+.execution{flex-shrink:0}
+/* Editor row floors at its content height so long corrupt-state feedback is never clipped on open. */
+.workbench{grid-template-rows:minmax(min-content,1fr) minmax(285px,1fr)}
+@media(max-width:880px){.workbench{grid-template-rows:370px 430px}}
+.execution #execution-note{font-size:12px;line-height:1.5;color:var(--ink)}
