@@ -47,18 +47,25 @@ function createWorkspaceRecovery({ win, indexPath, dialog }) {
   let prompting = false;
   let armed = false;        // set only by the explicit Discard choice, consumed by the next 'close'
   let closeDiscards = false; // the CURRENT pending close was explicitly chosen to discard
-  win.on('close', () => { closePending = true; closeDiscards = armed; armed = false; });
-  win.on('closed', () => { closed = true; closePending = false; closeDiscards = false; armed = false; });
+  let permitted = false;     // the explicit Discard override was applied: the close is completing
+  win.on('close', () => { closePending = true; closeDiscards = armed; permitted = false; armed = false; });
+  win.on('closed', () => { closed = true; closePending = false; closeDiscards = false; permitted = false; armed = false; });
   const destroyed = () => closed || win.isDestroyed() || win.webContents.isDestroyed();
   const gone = () => closePending || destroyed();
 
   // Fires only when the renderer vetoed unload (navigation or close). Never vetoes anything
   // itself; calls preventDefault (= let unload proceed) only for a close the user explicitly
-  // chose to discard. A navigation is not a close and never gets that override.
+  // chose to discard. The event carries no navigation/close identity: an ordinary navigation
+  // receives no override because no close is pending, but a navigation veto coinciding with a
+  // pending explicit-discard close cannot be told apart (accepted residual, not confinement).
   win.webContents.on('will-prevent-unload', event => {
-    if (destroyed() || !closePending) return;
-    closePending = false; // the close was vetoed: the window lives on
-    if (closeDiscards) { closeDiscards = false; event.preventDefault(); return; }
+    if (destroyed() || !closePending || permitted) return;
+    if (closeDiscards) {
+      // preventDefault = ignore the veto and let unload proceed. The close is NOT canceled, so
+      // closePending stays true (Restore and late error dialogs stay suppressed) until 'closed'.
+      closeDiscards = false; permitted = true; event.preventDefault(); return;
+    }
+    closePending = false; // the close was truly vetoed: the window lives on
     if (prompting) return; // repeated close requests coalesce
     prompting = true;
     askDiscard();

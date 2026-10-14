@@ -365,6 +365,38 @@ test('the discard allowance is bound to that close: a later close attempt gets n
   assert.equal(m.dialogCalls.length, 2);
 });
 
+test('after the Discard override and before closed, Restore is skipped (closing guard retained)', async () => {
+  const m = loadMain({ dialogResponse: () => Promise.resolve({ response: 1 }) });
+  m.setURL('about:blank');
+  closeAttempt(m); veto(m); await settle();       // veto -> Discard -> main re-issues close
+  assert.equal(m.closes.length, 1);
+  assert.equal(veto(m)(), 1, 'discarded close is allowed through');
+  m.restore().click({}, m.win); await flush();
+  assert.equal(m.loads.length, 1, 'Restore must not load while the permitted close is completing');
+  assert.equal(veto(m)(), 0, 'allowance stays consumed');
+  m.restore().click({}, m.win); await flush();
+  assert.equal(m.loads.length, 1, 'still closing after a further stray veto');
+  assert.equal(m.dialogCalls.length, 1, 'no new prompt while closing');
+  m.winEvents.closed();
+  m.restore().click({}, m.win); await flush();
+  assert.equal(m.loads.length, 1, 'closed is terminal');
+});
+
+test('an earlier failed Restore gets no late error dialog after the Discard override', async () => {
+  let reject;
+  const m = loadMain({
+    loadFile: n => (n === 1 ? Promise.resolve() : new Promise((_, r) => { reject = r; })),
+    dialogResponse: n => Promise.resolve({ response: n === 1 ? 1 : 0 }),
+  });
+  m.setURL('about:blank');
+  m.restore().click({}, m.win); await flush();            // Restore load in flight
+  assert.equal(m.loads.length, 2);
+  closeAttempt(m); veto(m); await settle();               // Discard prompt answered, close re-issued
+  assert.equal(veto(m)(), 1);                             // override; closed not yet emitted
+  reject(new Error('late')); await settle();
+  assert.equal(m.dialogCalls.length, 1, 'only the Discard prompt; no late error dialog while closing');
+});
+
 test('foreign scripted navigation unload veto is not a close and receives no override or dialog', async () => {
   const m = loadMain({ dialogResponse: () => Promise.resolve({ response: 1 }) });
   m.setURL('about:blank');
