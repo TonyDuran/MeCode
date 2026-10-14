@@ -203,3 +203,7 @@ Rollback: restore only this correction's desktop changes to its recorded pre-tas
 snapshot, not HEAD (which excludes prior uncommitted integration work). Preserve
 Prax's renderer, the eight-asset integration corrections and all recovery state.
 Removing app/code files does not stop or reconcile a container.
+
+## Navigation and recovery note
+
+The bridge still authorizes only the exact owner, main frame and workspace URL. The link-prevention preload listeners and the main-owned `Restore saved workspace` menu action add no IPC channel and no bridge key; after a foreign document has committed, capabilities and Run keep returning `untrusted_frame` until the user restores the workspace. Restoring does not clear a latch or resume a Run (navigation already cancelled any active Run).

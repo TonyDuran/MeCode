@@ -8,7 +8,8 @@ function load(reject = false, globals = {}) {
   let api;
   const calls = [];
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../preload.cjs'), 'utf8'), {
-    TextEncoder, TextDecoder, ...globals,
+    TextEncoder, TextDecoder, URL, window: { location: { href: 'file:///w/index.html' }, addEventListener() {} },
+    document: { baseURI: 'file:///w/index.html' }, ...globals,
     require(name) {
       assert.equal(name, 'electron');
       return {

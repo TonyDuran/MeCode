@@ -22,10 +22,11 @@ test('desktop denies both permission requests and checks before loading the docu
     ipcMain: { handle(name, fn) { ipc[name] = fn; calls.push(name); } },
     BrowserWindow: class {
       constructor(options) { windowOptions = options; this.webContents = { setWindowOpenHandler() {}, on() {} }; }
+      on() {} isDestroyed() { return false; }
       loadFile(file) { calls.push('load'); assert.equal(path.basename(file), 'index.html'); }
       static getAllWindows() { return []; }
     },
-    session,
+    session, Menu: { buildFromTemplate: t => t, setApplicationMenu() {} }, dialog: {},
   };
   const original = Module._load;
   try {
@@ -80,8 +81,10 @@ test('main selects trusted development/packaged CLI, forwards only the fixed RPC
             on(name, fn) { events[name] = fn; }, quit() { quit += 1; } },
           ipcMain: { handle(name, fn) { ipc[name] = fn; } },
           session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} } },
+          Menu: { buildFromTemplate: t => t, setApplicationMenu() {} }, dialog: {},
           BrowserWindow: class {
             constructor() { this.webContents = { on() {}, setWindowOpenHandler() {} }; }
+            on() {}
             loadFile() {}
           },
         };
