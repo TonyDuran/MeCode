@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import posixpath
 from pathlib import Path
 import subprocess
 import unittest
@@ -13,6 +14,74 @@ from unittest.mock import patch
 import chrome_pipe
 from runtime import ROOT, STATE
 import generate
+
+
+def _is_abs_clean(value):
+    return (isinstance(value, str) and value.startswith('/') and '\0' not in value
+            and posixpath.normpath(value) == value)
+
+
+def receipt_source_path(raw):
+    """Return the one exact fixture-source path a raw generation receipt recorded.
+
+    Taken only from the receipt's own actual_argv[3] after validating the whole invocation
+    record. The path is never resolved, read or executed, and a receipt-supplied pathname is
+    not authenticity: the approved receipt's SHA-256 is still pinned by the acceptance command.
+    """
+    records, termination = raw.get('raw_records'), raw.get('termination')
+    if not (isinstance(records, list) and isinstance(termination, list)
+            and len(records) == len(termination) == len(generate.FIXTURES)):
+        raise ValueError('receipt must hold exactly four ordered fixture entries')
+    if raw.get('source_sha256') != generate.HASHES:
+        raise ValueError('receipt source hashes differ from the pinned generator hashes')
+    interpreter = source = None
+    for fixture, record, entry in zip(generate.FIXTURES, records, termination):
+        if not isinstance(entry, dict) or set(entry) != {'fixture', 'reaped', 'pid_absent', 'actual_argv'}:
+            raise ValueError('malformed termination entry')
+        if entry['fixture'] != fixture or not isinstance(record, dict) or record.get('fixture') != fixture:
+            raise ValueError('fixture entries are not in the expected order')
+        argv = entry['actual_argv']
+        if not (isinstance(argv, list) and len(argv) == 5 and all(isinstance(a, str) for a in argv)):
+            raise ValueError('malformed actual_argv')
+        if argv[1:3] != ['-I', '-B'] or argv[4] != fixture:
+            raise ValueError('unexpected interpreter flags or fixture argument')
+        if not (_is_abs_clean(argv[0]) and _is_abs_clean(argv[3])):
+            raise ValueError('interpreter and fixture source must be clean absolute paths')
+        parts = posixpath.split(argv[3])
+        if parts[1] != 'fixtures.py' or posixpath.basename(parts[0]) != 'trusted-judge':
+            raise ValueError('fixture source must be trusted-judge/fixtures.py')
+        if (interpreter, source) not in ((None, None), (argv[0], argv[3])):
+            raise ValueError('mixed invocation paths')
+        interpreter, source = argv[0], argv[3]
+    return source
+
+
+def receipt_matches_artifact(data, raw):
+    """Compare every artifact record/termination entry with the raw receipt.
+
+    Only the exact validated invocation path inside `File "<path>"` of raw stderr is replaced.
+    Raises ValueError on any difference, including lengths (zip cannot hide an omission).
+    """
+    source = receipt_source_path(raw)
+    if data.get('source_sha256') != generate.HASHES:
+        raise ValueError('artifact source hashes differ from the pinned generator hashes')
+    count = len(generate.FIXTURES)
+    if not (isinstance(data.get('records'), list) and isinstance(data.get('termination'), list)
+            and len(data['records']) == len(data['termination']) == count):
+        raise ValueError('artifact must hold exactly four records and termination entries')
+    for record, original, entry, projected in zip(data['records'], raw['raw_records'], raw['termination'], data['termination']):
+        if not isinstance(original.get('stderr'), str):
+            raise ValueError('malformed raw record')
+        normalized = dict(original)
+        if record.get('fixture') == 'exception' and f'File "{source}"' not in original['stderr']:
+            raise ValueError('raw traceback does not cite the receipt invocation path')
+        normalized['stderr'] = original['stderr'].replace(f'File "{source}"', 'File "fixtures.py"')
+        if record != normalized:
+            raise ValueError('artifact record differs from raw receipt after exact path normalization')
+        if {k: v for k, v in entry.items() if k != 'actual_argv'} != projected:
+            raise ValueError('artifact termination projection differs from raw receipt')
+        if not (entry['reaped'] is True and entry['pid_absent'] is True and record['cleanup_confirmed'] is True):
+            raise ValueError('cleanup was not confirmed')
 
 
 class StaticBoundary(unittest.TestCase):
@@ -47,12 +116,12 @@ class StaticBoundary(unittest.TestCase):
         self.assertEqual([r['verdict'] for r in raw['raw_records']],
                          ['ACCEPTED','WRONG_ANSWER','RUNTIME_ERROR','TIME_LIMIT'])
         for record, original, receipt in zip(data['records'], raw['raw_records'], raw['termination']):
-            normalized = dict(original)
-            normalized['stderr'] = normalized['stderr'].replace(str(generate.JUDGE/'fixtures.py'), 'fixtures.py')
-            self.assertEqual(record, normalized)
             self.assertTrue(receipt['reaped'] and receipt['pid_absent'])
             self.assertEqual(receipt['actual_argv'][-1], record['fixture'])
             self.assertTrue(record['cleanup_confirmed'])
+        # Full four-way comparison; the only normalization is the receipt's own validated
+        # invocation path (it may come from a different checkout than this one).
+        receipt_matches_artifact(data, raw)
         self.assertEqual(raw['raw_records'][0]['stdout'], '10\n')
         self.assertEqual(raw['raw_records'][1]['stdout'], '11\n')
         self.assertIn('RuntimeError: benign fixture exception', raw['raw_records'][2]['stderr'])
@@ -61,6 +130,122 @@ class StaticBoundary(unittest.TestCase):
         for name in ['fixture-evidence.json', 'index.html']:
             self.assertLessEqual((ROOT/name).stat().st_size, 256*1024)
             self.assertNotIn('/home/', (ROOT/name).read_text())
+
+
+class ReceiptPortability(unittest.TestCase):
+    """Synthetic cross-checkout units for the receipt/artifact comparison only.
+
+    Every receipt here is built in memory from the public artifact plus a clearly synthetic
+    origin path. These are NOT authentic acceptance evidence; the authentic private receipt is
+    exercised only by StaticBoundary against its SHA-pinned file.
+    """
+    ORIGIN = '/synthetic-origin-A/prototypes/trusted-judge/fixtures.py'
+    PYTHON = '/synthetic/python/bin/python3'
+
+    def make(self, origin=None):
+        data = json.loads((ROOT/'fixture-evidence.json').read_text())
+        origin = origin or self.ORIGIN
+        raw_records = copy.deepcopy(data['records'])
+        for record in raw_records:
+            record['stderr'] = record['stderr'].replace('File "fixtures.py"', f'File "{origin}"')
+        termination = [dict(t, actual_argv=[self.PYTHON, '-I', '-B', origin, t['fixture']]) for t in data['termination']]
+        raw = {'generated_utc': data['generated_utc'], 'source_sha256': dict(generate.HASHES),
+               'raw_records': raw_records, 'termination': termination}
+        return data, raw
+
+    def rejects(self, mutate, label):
+        data, raw = self.make()
+        mutate(data, raw)
+        with self.assertRaises(ValueError, msg=label):
+            receipt_matches_artifact(data, raw)
+
+    def test_receipt_from_other_checkout_compares_after_exact_path_normalization(self):
+        data, raw = self.make()
+        self.assertNotEqual(self.ORIGIN, str(generate.JUDGE/'fixtures.py'))
+        self.assertIn(self.ORIGIN, raw['raw_records'][2]['stderr'])
+        self.assertEqual(receipt_source_path(raw), self.ORIGIN)
+        receipt_matches_artifact(data, raw)
+
+    def test_current_checkout_receipt_still_compares(self):
+        data, raw = self.make(str(generate.JUDGE/'fixtures.py'))
+        receipt_matches_artifact(data, raw)
+
+    def test_unrelated_traceback_paths_are_rejected(self):
+        for other in ['/elsewhere/prototypes/trusted-judge/fixtures.py', '/home/someone/fixtures.py', 'fixtures.py',
+                      self.ORIGIN + 'c', self.ORIGIN.replace('synthetic-origin-A', 'synthetic-origin-B')]:
+            def swap(data, raw, other=other):
+                raw['raw_records'][2]['stderr'] = raw['raw_records'][2]['stderr'].replace(self.ORIGIN, other)
+            self.rejects(swap, other)
+
+        def extra_path(data, raw):
+            raw['raw_records'][2]['stderr'] += '  File "/another/place.py", line 1, in <module>\n'
+        self.rejects(extra_path, 'extra traceback path')
+
+        def mixed_line(data, raw):
+            raw['raw_records'][2]['stderr'] = raw['raw_records'][2]['stderr'].replace(
+                'line 22', 'line 22 /home/hermes/data/other/trusted-judge/fixtures.py')
+        self.rejects(mixed_line, 'unrelated path on same line')
+
+    def test_malformed_mismatched_or_mixed_invocation_is_rejected(self):
+        def argv(i, fn):
+            def mutate(data, raw): raw['termination'][i]['actual_argv'] = fn(list(raw['termination'][i]['actual_argv']))
+            return mutate
+        cases = {
+            'relative source': argv(0, lambda a: a[:3] + ['trusted-judge/fixtures.py'] + a[4:]),
+            'relative interpreter': argv(0, lambda a: ['python3'] + a[1:]),
+            'argv too short': argv(0, lambda a: a[:4]),
+            'argv too long': argv(0, lambda a: a + ['extra']),
+            'flags changed': argv(1, lambda a: [a[0], '-S', '-B'] + a[3:]),
+            'flags swapped': argv(1, lambda a: [a[0], '-B', '-I'] + a[3:]),
+            'wrong basename': argv(2, lambda a: a[:3] + [a[3].replace('fixtures.py', 'runner.py')] + a[4:]),
+            'wrong parent': argv(2, lambda a: a[:3] + [a[3].replace('trusted-judge', 'elsewhere')] + a[4:]),
+            'dotdot component': argv(2, lambda a: a[:3] + ['/synthetic-origin-A/x/../prototypes/trusted-judge/fixtures.py'] + a[4:]),
+            'mixed source paths': argv(3, lambda a: a[:3] + [a[3].replace('origin-A', 'origin-B')] + a[4:]),
+            'mixed interpreter': argv(3, lambda a: ['/other/python3'] + a[1:]),
+            'fixture argument mismatch': argv(1, lambda a: a[:4] + ['correct']),
+            'non-string element': argv(0, lambda a: a[:4] + [7]),
+        }
+        for label, mutate in cases.items():
+            self.rejects(mutate, label)
+
+    def test_wrong_missing_extra_or_reordered_records_are_rejected(self):
+        def term(fn):
+            def mutate(data, raw): fn(raw['termination'])
+            return mutate
+        def both(fn):
+            def mutate(data, raw): fn(raw['raw_records']); fn(raw['termination']); fn(data['records']); fn(data['termination'])
+            return mutate
+        self.rejects(term(lambda t: t.pop()), 'missing termination entry')
+        self.rejects(term(lambda t: t.append(copy.deepcopy(t[0]))), 'extra termination entry')
+        self.rejects(term(lambda t: t.reverse()), 'reordered termination')
+        self.rejects(term(lambda t: t[1].update(fixture='correct')), 'duplicate fixture')
+        self.rejects(term(lambda t: t[0].update(extra=True)), 'extra termination key')
+        self.rejects(term(lambda t: t[0].pop('reaped')), 'missing termination key')
+        self.rejects(both(lambda items: items.pop()), 'every list one short (zip must not hide omission)')
+        self.rejects(lambda d, r: r['raw_records'].pop(), 'raw record missing')
+        self.rejects(lambda d, r: d['records'].pop(), 'artifact record missing')
+        self.rejects(lambda d, r: r['raw_records'].reverse(), 'raw records reordered')
+        self.rejects(lambda d, r: d['termination'].pop(), 'artifact termination missing')
+
+    def test_source_hashes_are_checked_against_the_pinned_values(self):
+        self.rejects(lambda d, r: r['source_sha256'].update({'fixtures.py': '0' * 64}), 'receipt hash changed')
+        self.rejects(lambda d, r: r['source_sha256'].pop('runner.py'), 'receipt hash missing')
+        self.rejects(lambda d, r: r['source_sha256'].update(extra='0' * 64), 'receipt hash extra')
+        data, raw = self.make()
+        pinned_elsewhere = dict(generate.HASHES, **{'runner.py': '0' * 64})
+        data['source_sha256'] = dict(pinned_elsewhere); raw['source_sha256'] = dict(pinned_elsewhere)
+        with self.assertRaises(ValueError):  # receipt and artifact agree with each other, not with the pin
+            receipt_matches_artifact(data, raw)
+
+    def test_record_content_still_has_to_match_exactly(self):
+        self.rejects(lambda d, r: r['raw_records'][0].update(stdout='11\n'), 'stdout')
+        self.rejects(lambda d, r: r['raw_records'][1].update(verdict='ACCEPTED'), 'verdict')
+        self.rejects(lambda d, r: r['raw_records'][0].update(cleanup_confirmed=False), 'cleanup')
+        self.rejects(lambda d, r: r['raw_records'][0]['captured_bytes'].update(stdout=99), 'raw counts')
+        self.rejects(lambda d, r: r['raw_records'][0].update(elapsed_s=9.0), 'timing')
+        self.rejects(lambda d, r: r['raw_records'][2].update(stderr=r['raw_records'][2]['stderr'] + 'x'), 'stderr suffix')
+        self.rejects(lambda d, r: r['termination'][0].update(pid_absent=False), 'termination projection')
+        self.rejects(lambda d, r: d['termination'][0].update(reaped=False), 'artifact termination projection')
 
 
 class BrowserNegatives(unittest.TestCase):
