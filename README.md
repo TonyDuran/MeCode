@@ -14,4 +14,7 @@ verified local runtime and limitations. The CI workflow runs this same bounded
 prototype check on pull requests and pushes to main; no CI pass or full-product
 coverage is claimed here.
 
+The experimental [ENGINE-1 fixed-smoke controller](prototypes/docker-engine/README.md)
+has mocked unit tests only in CI; it is not a safe edited-code runner and CI does not run Docker.
+
 Licensed under [Apache-2.0](LICENSE).
