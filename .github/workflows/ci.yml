@@ -33,6 +33,11 @@ jobs:
           MECODE_LOCAL_STATE=$(mktemp -d "${RUNNER_TEMP}/mecode-ws.XXXXXX")
           export MECODE_LOCAL_STATE
           python3 -B -W error -m unittest -v test_evidence.StaticBoundary.test_browser_has_no_execution_or_native_transport test_evidence.StaticBoundary.test_generator_identity_failure_before_any_launch test_engine_unavailable.StaticNotice
+      - name: Test desktop shell boundaries (Node-only, no Electron download)
+        run: |
+          set -euo pipefail
+          node --test desktop/test/*.test.cjs
+          node desktop/stage.cjs
       - name: Test docker-engine controller mocks (no Docker, Chrome-free)
         run: |
           set -euo pipefail
