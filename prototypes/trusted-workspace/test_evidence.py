@@ -17,7 +17,7 @@ import generate
 
 class StaticBoundary(unittest.TestCase):
     def test_browser_has_no_execution_or_native_transport(self):
-        for name in ['app.js', 'persistence.js', 'evidence.js', 'workspace.html.in']:
+        for name in ['app.js', 'run-ui.js', 'persistence.js', 'evidence.js', 'workspace.html.in']:
             source = (ROOT/name).read_text()
             for forbidden in ['eval(', 'new Function', 'fetch(', 'XMLHttpRequest', 'WebSocket',
                               'Worker(', 'child_process', 'require(', 'import(', 'window.open(',

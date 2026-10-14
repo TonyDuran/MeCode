@@ -24,8 +24,9 @@ class StaticNotice(unittest.TestCase):
         self.assertEqual((ROOT/'index.html').read_text(), template.replace('@@EVIDENCE@@', text))
         self.assertEqual(template.count('id="execution-note"'), 1)
         self.assertIn(NOTICE, template)
-        self.assertEqual(template.count('<button disabled aria-describedby="execution-note">'), 2)
-        for name in ['app.js', 'persistence.js', 'evidence.js', 'workspace.html.in']:
+        for action in ['run-draft', 'submit-draft']:
+            self.assertIn(f'<button id="{action}" disabled aria-describedby="execution-note">', template)
+        for name in ['app.js', 'run-ui.js', 'persistence.js', 'evidence.js', 'workspace.html.in']:
             source = (ROOT/name).read_text()
             for token in ['controller', 'subprocess', 'socket', 'fetch(', 'XMLHttpRequest',
                           'WebSocket', 'ipcRenderer', 'child_process', 'import(', 'onsubmit=']:

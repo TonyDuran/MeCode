@@ -3,10 +3,10 @@
   "productName": "MeCode",
   "version": "0.1.0",
   "private": true,
-  "description": "Offline MeCode desktop prototype; live judging is not yet connected",
+  "description": "Offline-first MeCode prototype with default-off experimental packaged-Linux Run; Submit unavailable",
   "main": "main.cjs",
   "scripts": {
-    "test": "node --test test/*.test.cjs",
+    "test": "node --test test/*.test.cjs ../prototypes/trusted-workspace/test_run_ui_contract.cjs",
     "stage": "node stage.cjs",
     "start": "npm run stage && electron .",
     "package": "npm run stage && electron-forge package",

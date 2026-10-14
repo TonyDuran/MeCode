@@ -36,10 +36,10 @@ jobs:
       - name: Install desktop test dependencies (no lifecycle scripts or Electron binary)
         working-directory: desktop
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Test desktop shell boundaries (Node-only, no Electron binary)
+      - name: Test desktop and Run renderer contract (Node-only, no browser or Electron binary)
         run: |
           set -euo pipefail
-          node --test desktop/test/*.test.cjs
+          node --test desktop/test/*.test.cjs prototypes/trusted-workspace/test_run_ui_contract.cjs
           node desktop/stage.cjs
       - name: Test docker-engine controller mocks (no Docker, Chrome-free)
         run: |

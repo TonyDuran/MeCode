@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { stageWorkspace } = require('../stage.cjs');
 
-const EXPECTED = ['index.html', 'styles.css', 'app-styles.css', 'app.js',
+const EXPECTED = ['index.html', 'styles.css', 'app-styles.css', 'app.js', 'run-ui.js',
                   'persistence.js', 'evidence.js', 'evidence-contract.js'];
 
 test('stage fails before writing if a renderer asset disagrees with the inventory', () => {

@@ -6,9 +6,12 @@ affected Talos review, Themis verification and PM final-binding confirmation
 remain pending. No commit/push/PR, merge, hosted CI success or release is claimed.
 This is a headless external-Chrome workspace with static fixed-fixture evidence.
 It is NOT a bundled app, a live submission engine, or a safe arbitrary-code judge.
-Run/Submit remain semantically disabled with a persistent associated notice:
+In an ordinary browser or without an enabled preload bridge, Run/Submit remain
+semantically disabled with a persistent associated notice:
 “Run and Submit are unavailable in this prototype. Live judging is not integrated
 or verified. Edit your draft; check save status above. It has not been judged.”
+The experimental Run renderer described below enables Run only when the optional
+preload reports enabled. Submit always remains disabled.
 Fixture success is never saved as learner progress or a verdict on a draft.
 The copy does not promise saving: when corrupt state blocks saving, the live save
 status above the notice says so. At 1024x768 the editor grid row floors at its
@@ -32,7 +35,8 @@ from `workspace.html.in` with the identical JSON bytes in an inert
 The whole generated page also has a 256 KiB cap. This avoids file-URL fetch
 permissions, a server, native IPC, and executable data wrappers. The small
 `evidence-contract.js` contains only generated digest/source identity constants.
-No dynamically loaded scripts, eval, native APIs or renderer-triggered runner.
+No dynamically loaded scripts, eval or renderer-native transport. Optional
+experimental Run uses only the separately owned preload contract described below.
 The anonymous CDP pipe in the Python QA harness is developer-only, not a renderer
 bridge and not an app execution feature.
 
@@ -202,6 +206,60 @@ it does not satisfy ENGINE-1, SLICE-1, DESIGN-CONFIRMED or release.
 Rollback this slice by restoring only its changed files to the base revision and
 removing its new test (after preserving wanted task evidence). No database/schema
 migration or draft rollback is needed.
+
+## Experimental Run renderer candidate (review pending)
+
+This section supersedes historical presentation-only claims for this candidate.
+`run-ui.js` consumes only optional `window.mecodeJudge.capabilities()` and
+`run({source, problemId: 'sum-array-v1'})`. No bridge is implemented here, no
+renderer transport/dependency is added, and desktop/engine ownership stays separate.
+Only exact `enabled: true` enables Run. Submit remains unavailable. Bridge reasons
+and exception details are never displayed. Missing/disabled/rejected capability
+retains the original engine-unavailable notice. UNAVAILABLE, rejection or malformed
+results disable Run for the rest of the page session; the bridge itself stays latched until app restart.
+INVALID_INPUT is a generic correctable failure and leaves Run enabled.
+
+Runs are single-flight and capture the current draft, including unsaved edits.
+Pending and result text live in an accessible status region separate from save
+feedback and recorded fixtures. Every input invalidates the result; even editing
+and restoring identical text while pending discards its result. Results are
+in-memory only, not saved progress, verifiable submissions or Mac execution proof.
+The persistence source and envelope are unchanged. Narrow editor rows expand to
+fit Run feedback plus corrupt-storage notices rather than clipping them.
+
+Use a fresh external MECODE_LOCAL_STATE and the existing Chrome sandbox:
+
+    python3 -B generate.py --render-existing
+    python3 -B inventory.py --write
+    python3 -B -W error test_run_ui.py
+    python3 -B -W error test_app.py
+    python3 -B -W error test_engine_unavailable.py
+    python3 -B inventory.py
+
+The Run tests inject a mocked preload through QA CDP before navigation; they never
+execute editor source. Replies follow the producer contract in
+desktop/judge-bridge.cjs and BRIDGE.md: JUDGED = known verdict, null reason, finite
+elapsed 0..28; UNAVAILABLE/INVALID_INPUT = null verdict and elapsed plus a lowercase
+diagnostic code (INVALID_INPUT is exactly invalid_source_or_problem). Anything else
+(null JUDGED elapsed, JUDGED reason, elapsed > 28, extra keys, private reason text) is
+rejected with no verdict and Run disabled. After UNAVAILABLE the bridge latches until
+app restart, so feedback never says "Run again", even when the reply arrives stale.
+`node --test test_run_ui_contract.cjs` drives this repository's real bridge
+(MECODE_DESKTOP_DIR optionally overrides the repository-relative desktop path) with
+a mocked Python child into this run-ui.js, and checks bridge and renderer both reject
+the same malformed records. A missing bridge fails, never skips. Desktop `npm test`
+and hosted CI include this Node-only cross-boundary test; neither runs the Run UI
+browser suite or real Electron IPC test. No hosted CI success is claimed here.
+Coverage includes all three verdicts, unavailable/invalid/rejected/malformed responses,
+capability failures, duplicate forced clicks, stale edits (including stale UNAVAILABLE),
+ephemeral results across reload/fresh process, ordinary
+no-bridge behavior, 375/1024 viewport pending/results, and corrupt persistence with
+Run enabled. Existing default-browser suite remains the regression authority.
+No fixture refresh or generation receipt fabrication is needed. Real Electron
+bridge/engine integration, headed QA, Mac and hosted CI remain unverified.
+Rollback only this slice's files to base and remove run-ui.js/test_run_ui.py after
+preserving wanted evidence; regenerate presentation/inventory if combining changes.
+No storage migration is involved.
 
 Rollback of the whole prototype: close only this task's browsers first, back up wanted drafts/quarantine,
 then remove this new prototype directory. Separately remove only its dedicated
