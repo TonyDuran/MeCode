@@ -1,4 +1,4 @@
-"""Fixed version smoke only. Not a learner-code runner or a security sandbox.
+"""Fixed-smoke lifecycle, also reused by the experimental edited-source leaf.
 
 Self-authored by Talos. Live use requires separate operator approval; unit tests
 inject a fake transport and never contact Docker.
@@ -27,6 +27,7 @@ PLATFORM = "linux/amd64"
 COMMAND = ("-I", "-B", "--version")
 EXPECTED_OUTPUT = b"Python 3.14.8\n"
 CAP = 65536  # Combined stdout + stderr, including Docker diagnostics.
+INPUT_CAP = 16384  # Edited-source stdin only; never placed in argv or env.
 WALL_SECONDS = 5.0
 API_SECONDS = 2.0
 STATE_DIR = Path.home() / ".local" / "state" / "mecode-engine1"
@@ -63,29 +64,42 @@ class DockerCLI:
     def __init__(self, endpoint=ENDPOINT):
         self.endpoint = endpoint
 
-    def call(self, args, timeout, cap):
+    def call(self, args, timeout, cap, *, input_bytes=None):
         checked_endpoint(self.endpoint, os.environ)
         if timeout <= 0 or cap <= 0:
             raise Failure("exhausted_budget")
+        if input_bytes is not None and (type(input_bytes) is not bytes or len(input_bytes) > INPUT_CAP):
+            raise Failure("invalid_stdin")
         # No inherited credentials/config/context/proxies or Docker variables.
         # This is normal explicit --host use, not an alternate access path.
         with tempfile.TemporaryDirectory(prefix="mecode-docker-config-") as config:
             argv = [DOCKER, "--config", config, "--host", self.endpoint, *args]
+            if input_bytes is not None:
+                return self._capture(argv, timeout, cap, input_bytes=input_bytes)
             return self._capture(argv, timeout, cap)
 
     @staticmethod
-    def _capture(argv, timeout, cap):
+    def _capture(argv, timeout, cap, *, input_bytes=None):
         deadline = time.monotonic() + timeout
         proc = subprocess.Popen(
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            argv, stdin=subprocess.DEVNULL if input_bytes is None else subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, env={"PATH": "/usr/local/bin:/usr/bin:/bin", "LC_ALL": "C"},
             start_new_session=True,
         )
+        assert proc.stdout is not None and proc.stderr is not None
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         stopped = None
         used = 0
+        sent = 0
         try:
             with selectors.DefaultSelector() as sel:
+                if input_bytes is not None:
+                    assert proc.stdin is not None
+                    os.set_blocking(proc.stdin.fileno(), False)
+                    if input_bytes:
+                        sel.register(proc.stdin, selectors.EVENT_WRITE, "stdin")
+                    else:
+                        proc.stdin.close()
                 for name in buffers:
                     stream = getattr(proc, name)
                     os.set_blocking(stream.fileno(), False)
@@ -96,7 +110,27 @@ class DockerCLI:
                         stopped = "timeout"
                         break
                     for key, _ in sel.select(min(left, 0.05)):
-                        chunk = os.read(key.fd, min(4096, cap - used + 1))
+                        if key.data == "stdin":
+                            assert input_bytes is not None and proc.stdin is not None
+                            try:
+                                count = os.write(key.fd, input_bytes[sent:sent + 4096])
+                            except BlockingIOError:
+                                continue
+                            except BrokenPipeError:
+                                stopped = "stdin_closed"
+                                break
+                            if count <= 0:
+                                stopped = "stdin_closed"
+                                break
+                            sent += count
+                            if sent == len(input_bytes):
+                                sel.unregister(key.fileobj)
+                                proc.stdin.close()  # Deliver EOF; never block on a buffered flush.
+                            continue
+                        try:
+                            chunk = os.read(key.fd, min(4096, cap - used + 1))
+                        except BlockingIOError:
+                            continue
                         if not chunk:
                             sel.unregister(key.fileobj)
                             continue
@@ -120,6 +154,8 @@ class DockerCLI:
                 # Separate, bounded direct-client reap; not daemon cleanup.
                 proc.wait(timeout=API_SECONDS)
             finally:
+                if proc.stdin is not None and not proc.stdin.closed:
+                    proc.stdin.close()
                 proc.stdout.close()
                 proc.stderr.close()
         return Reply(proc.returncode, bytes(buffers["stdout"]), bytes(buffers["stderr"]), stopped)
@@ -195,6 +231,8 @@ class State:
 
 
 class Controller:
+    SUCCESS_STATUS = "FIXED_SMOKE_OK"
+
     def __init__(self, transport, state_dir=STATE_DIR, endpoint=ENDPOINT, clock=time.monotonic):
         self.transport = transport
         self.state = State(state_dir)
@@ -202,11 +240,14 @@ class Controller:
         self.clock = clock
         self.available = True
 
-    def _call(self, args, deadline, cap=CAP):
+    def _call(self, args, deadline, cap=CAP, *, input_bytes=None):
         left = deadline - self.clock()
         if left <= 0:
             raise Failure("wall_timeout")
-        reply = self.transport.call(tuple(args), min(API_SECONDS, left), cap)
+        if input_bytes is None:
+            reply = self.transport.call(tuple(args), min(API_SECONDS, left), cap)
+        else:
+            reply = self.transport.call(tuple(args), min(API_SECONDS, left), cap, input_bytes=input_bytes)
         if len(reply.stdout) + len(reply.stderr) > cap:
             # Defend the controller contract even against a broken adapter.
             bounded = Reply(reply.code, reply.stdout[:cap],
@@ -316,6 +357,17 @@ class Controller:
         except (Exception, KeyboardInterrupt):
             return False
 
+    def _create_args(self, name) -> tuple[str, ...]:
+        return create_args(name)
+
+    def _start(self, container_id, deadline):
+        return self._call(("start", "--attach", container_id), deadline)
+
+    def _judge(self, output):
+        if output != EXPECTED_OUTPUT:
+            raise Failure("unexpected_fixed_output")
+        return {"status": self.SUCCESS_STATUS}
+
     def run(self):
         started = self.clock()
         result = {"status": "UNAVAILABLE", "stage": "gate", "reason": None,
@@ -341,7 +393,7 @@ class Controller:
                     stage = "create"
                     self.state.record(name, None, stage)
                     try:
-                        raw = self._call(create_args(name), deadline)
+                        raw = self._call(self._create_args(name), deadline)
                     except Failure as exc:
                         container_id = self._recover_create_id(exc, name)
                         if container_id is not None:
@@ -355,7 +407,7 @@ class Controller:
                     result["container_id"] = container_id
                     stage = "start"
                     self.state.record(name, container_id, stage)
-                    output = self._call(("start", "--attach", container_id), deadline)
+                    output = self._start(container_id, deadline)
                     result["stdout"] = output.decode("utf-8", errors="replace")
                     stage = "exit_inspect"
                     self.state.record(name, container_id, stage)
@@ -369,9 +421,7 @@ class Controller:
                             or type(state.get("ExitCode")) is not int or state["ExitCode"] != 0
                             or state.get("Error") != ""):
                         raise Failure("unexpected_exit_state")
-                    if output != EXPECTED_OUTPUT:
-                        raise Failure("unexpected_fixed_output")
-                    result.update(status="FIXED_SMOKE_OK", stdout=output.decode("ascii"))
+                    result.update(self._judge(output))
                 except KeyboardInterrupt:
                     result["reason"] = "cancelled"
                 except Exception as exc:
@@ -388,7 +438,7 @@ class Controller:
                             result.update(status="UNAVAILABLE", reason="cleanup_unconfirmed")
                     elif stage == "create":
                         result["cleanup_confirmed"] = False
-                    if result["status"] == "FIXED_SMOKE_OK" and result["cleanup_confirmed"] is True:
+                    if result["status"] == self.SUCCESS_STATUS and result["cleanup_confirmed"] is True:
                         self.state.clear()
                         self.available = True
                     else:
