@@ -50,3 +50,50 @@ jobs:
           # Clean environment: no DOCKER_* variables, no inherited HOME/TMPDIR.
           env -i PATH="$PATH" LANG=C.UTF-8 HOME="$TASK_ROOT/home" TMPDIR="$TASK_ROOT/tmp" \
             python3 -B -W error -m unittest discover -s prototypes/docker-engine -v
+
+  macos-arm64-package:
+    # Native Apple Silicon integrity check, not a GUI/UAT or notarized release.
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install exact desktop dependencies and test
+        working-directory: desktop
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          npm ci --no-audit --no-fund
+          npm test
+      - name: Build, locally ad-hoc sign, and verify arm64 archive
+        working-directory: desktop
+        run: |
+          set -euo pipefail
+          npm run make -- --platform=darwin --arch=arm64
+          app=out/MeCode-darwin-arm64/MeCode.app
+          zip=out/make/zip/darwin/arm64/MeCode-darwin-arm64-0.1.0.zip
+          test "$(lipo -archs "$app/Contents/MacOS/MeCode")" = arm64
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          node node_modules/@electron/fuses/dist/bin.js read --app "$app"
+          rm -- "$zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
+          unzip -tq "$zip"
+          extract=$(mktemp -d "${RUNNER_TEMP}/mecode-signed.XXXXXX")
+          ditto -x -k "$zip" "$extract"
+          codesign --verify --deep --strict --verbose=2 "$extract/MeCode.app"
+          shasum -a 256 "$zip"
+      - name: Retain signed test archive on main only (not a release)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mecode-macos-arm64-ad-hoc-${{ github.sha }}
+          path: desktop/out/make/zip/darwin/arm64/MeCode-darwin-arm64-0.1.0.zip
+          if-no-files-found: error
+          retention-days: 7
