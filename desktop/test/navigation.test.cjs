@@ -112,13 +112,16 @@ test('the two-method judge bridge is unchanged', () => {
 });
 
 // ---------------------------------------------------------------- main harness
-function loadMain({ loadFile } = {}) {
+function loadMain({ loadFile, dialogResponse } = {}) {
+  const closes = []; const shutdowns = []; const quits = [];
   const ipc = {}; const appEvents = {}; const dialogCalls = []; const loads = [];
   let ready; let template; let applied; let currentURL = INDEX_URL; let destroyed = false;
   const winEvents = {}; const wcEvents = {}; let openHandler; let windowOptions;
   const win = {
     isDestroyed: () => destroyed,
     on(name, fn) { winEvents[name] = fn; },
+    // Electron emits 'close' synchronously from close(); the renderer unload reply is separate.
+    close() { closes.push(1); if (winEvents.close) winEvents.close({ preventDefault() { assert.fail('close must not be vetoed'); } }); },
     loadFile(file, ...rest) {
       loads.push([file, ...rest]);
       return loadFile ? loadFile(loads.length) : Promise.resolve();
@@ -130,19 +133,19 @@ function loadMain({ loadFile } = {}) {
   };
   const electron = {
     app: { isPackaged: false, enableSandbox() {}, whenReady: () => ({ then(fn) { ready = fn; } }),
-      on(n, fn) { appEvents[n] = fn; }, quit() {} },
+      on(n, fn) { appEvents[n] = fn; }, quit() { quits.push(1); } },
     ipcMain: { handle(n, fn) { ipc[n] = fn; } },
     session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} } },
     BrowserWindow: class { constructor(o) { windowOptions = o; return win; } static getAllWindows() { return []; } },
     Menu: { buildFromTemplate(t) { template = t; return { template: t }; }, setApplicationMenu(m) { applied = m; } },
-    dialog: { showMessageBox(...args) { dialogCalls.push(args); return Promise.resolve({ response: 0 }); } },
+    dialog: { showMessageBox(...args) { dialogCalls.push(args); return dialogResponse ? dialogResponse(dialogCalls.length) : Promise.resolve({ response: 0 }); } },
   };
   vm.runInNewContext(fs.readFileSync(path.join(DESKTOP, 'main.cjs'), 'utf8'), {
     __dirname: DESKTOP, process: { platform: 'linux', resourcesPath: '/r', env: {} }, console,
     require(name) {
       if (name === 'node:path') return path;
       if (name === 'node:os') return { userInfo: () => ({ homedir: '/account/home' }) };
-      if (name === './judge-bridge.cjs') return { createJudgeBridge: () => ({ bind() {}, capabilities() {}, run() {}, shutdown: () => Promise.resolve() }) };
+      if (name === './judge-bridge.cjs') return { createJudgeBridge: () => ({ bind() {}, capabilities() {}, run() {}, shutdown: () => { shutdowns.push(1); return Promise.resolve(); } }) };
       if (name === './security.cjs') return require('../security.cjs');
       assert.equal(name, 'electron');
       return electron;
@@ -158,7 +161,7 @@ function loadMain({ loadFile } = {}) {
     return null;
   };
   return {
-    win, loads, dialogCalls, ipc, winEvents, wcEvents, windowOptions, openHandler,
+    win, loads, dialogCalls, ipc, winEvents, wcEvents, appEvents, closes, shutdowns, quits, windowOptions, openHandler,
     template: () => template, applied: () => applied,
     restore: () => find(template, /^Restore saved workspace$/),
     help: () => find(template, /recovery/i),
@@ -267,8 +270,136 @@ test('defense in depth is retained: popup denied, foreign will-navigate/will-red
   }
 });
 
-test('main source has no unconditional unload veto, stop(), openExternal or renderer-controlled load', () => {
+test('main source has no stop(), openExternal, renderer unload hook or renderer-controlled load', () => {
+  // The old blanket ban on the will-prevent-unload spelling is replaced by the behavioral
+  // no-unconditional-bypass tests below; these remaining spellings are still forbidden.
   const src = fs.readFileSync(path.join(DESKTOP, 'main.cjs'), 'utf8') + fs.readFileSync(path.join(DESKTOP, 'security.cjs'), 'utf8')
     + fs.readFileSync(path.join(DESKTOP, 'preload.cjs'), 'utf8');
-  assert.doesNotMatch(src, /openExternal|\.stop\(\)|will-prevent-unload|beforeunload|loadURL/);
+  assert.doesNotMatch(src, /openExternal|\.stop\(\)|beforeunload|loadURL/);
+});
+
+// ---------------------------------------------------------------- close / unload lifecycle
+const veto = (m) => { let bypassed = 0; m.wcEvents['will-prevent-unload']({ preventDefault() { bypassed += 1; } }); return () => bypassed; };
+const settle = async () => { await flush(); await new Promise(r => setImmediate(r)); await flush(); };
+const closeAttempt = (m) => m.winEvents.close({ preventDefault() { assert.fail('close must not be vetoed by main'); } });
+
+test('canceled close (renderer unload veto) does not permanently disable Restore', async () => {
+  const m = loadMain();
+  m.setURL('about:blank');
+  closeAttempt(m);
+  m.restore().click({}, m.win); await flush();
+  assert.equal(m.loads.length, 1, 'restore stays a no-op while the close is genuinely pending');
+  veto(m); await settle();
+  m.restore().click({}, m.win); await flush();
+  assert.equal(m.loads.length, 2, 'restore works after the close was vetoed');
+  assert.deepEqual(m.loads[1], [INDEX]);
+});
+
+test('pending-close load failure shows no dialog; an actually closed window is never resurrected', async () => {
+  let reject;
+  const m = loadMain({ loadFile: n => (n === 1 ? Promise.resolve() : new Promise((_, r) => { reject = r; })) });
+  m.setURL('about:blank'); m.restore().click({}, m.win); await flush();
+  closeAttempt(m); reject(new Error('x')); await settle();
+  assert.equal(m.dialogCalls.length, 0);
+  m.winEvents.closed();
+  veto(m); await settle();
+  m.restore().click({}, m.win); await flush();
+  assert.equal(m.loads.length, 2, 'closed is terminal');
+});
+
+test('a vetoed close shows ONE parented fixed-text choice; default and cancel are Keep editing', async () => {
+  const m = loadMain();
+  closeAttempt(m); const bypassed = veto(m); closeAttempt(m); veto(m); closeAttempt(m); veto(m); // repeats coalesce
+  await settle();
+  assert.equal(m.dialogCalls.length, 1);
+  const [parent, options] = m.dialogCalls[0];
+  assert.equal(parent, m.win, 'parented to the window');
+  assert.deepEqual(options.buttons, ['Keep editing', 'Discard unsaved changes and quit']);
+  assert.equal(options.defaultId, 0); assert.equal(options.cancelId, 0);
+  assert.doesNotMatch(JSON.stringify(options), /has been saved|were saved|saved successfully/i);
+  assert.equal(bypassed(), 0, 'showing the choice never bypasses the veto');
+  assert.equal(m.closes.length, 0);
+});
+
+test('Keep editing leaves the window usable, Restore eligible, and a later close asks again', async () => {
+  const m = loadMain();
+  closeAttempt(m); veto(m); await settle();
+  assert.equal(m.dialogCalls.length, 1); assert.equal(m.closes.length, 0);
+  m.setURL('about:blank'); m.restore().click({}, m.win); await flush();
+  assert.equal(m.loads.length, 2);
+  closeAttempt(m); const bypassed = veto(m); await settle();
+  assert.equal(m.dialogCalls.length, 2, 'cancel-then-recover then a new close attempt prompts again');
+  assert.equal(bypassed(), 0);
+  assert.equal(m.shutdowns.length, 0, 'a canceled close never starts judge shutdown by itself');
+});
+
+test('a dialog failure is treated as Keep editing', async () => {
+  const m = loadMain({ dialogResponse: () => Promise.reject(new Error('no display')) });
+  closeAttempt(m); veto(m); await settle();
+  assert.equal(m.closes.length, 0);
+  m.setURL('about:blank'); m.restore().click({}, m.win); await flush();
+  assert.equal(m.loads.length, 2);
+});
+
+test('Discard unsaved changes and quit allows exactly that one pending close', async () => {
+  const m = loadMain({ dialogResponse: () => Promise.resolve({ response: 1 }) });
+  closeAttempt(m); const first = veto(m); await settle();
+  assert.equal(first(), 0, 'the original veto is honored; only the explicit choice re-closes');
+  assert.equal(m.closes.length, 1, 'main re-issues the close once');
+  const second = veto(m); // renderer vetoes the explicitly discarded close
+  assert.equal(second(), 1, 'that one close is allowed through');
+  const third = veto(m);
+  assert.equal(third(), 0, 'the allowance is consumed');
+  await settle();
+  assert.equal(m.dialogCalls.length, 1);
+});
+
+test('the discard allowance is bound to that close: a later close attempt gets no bypass', async () => {
+  const m = loadMain({ dialogResponse: () => Promise.resolve({ response: 1 }) });
+  closeAttempt(m); veto(m); await settle();
+  assert.equal(m.closes.length, 1);
+  // The re-issued close never produced a veto (window stayed); the user then tries to close again.
+  closeAttempt(m); const again = veto(m);
+  assert.equal(again(), 0, 'a fresh close attempt is vetoed normally and asks again');
+  await settle();
+  assert.equal(m.dialogCalls.length, 2);
+});
+
+test('foreign scripted navigation unload veto is not a close and receives no override or dialog', async () => {
+  const m = loadMain({ dialogResponse: () => Promise.resolve({ response: 1 }) });
+  m.setURL('about:blank');
+  const bypassed = veto(m); await settle();
+  assert.equal(bypassed(), 0); assert.equal(m.dialogCalls.length, 0); assert.equal(m.closes.length, 0);
+});
+
+test('a destroyed or closed window ignores late unload vetoes', async () => {
+  const m = loadMain();
+  closeAttempt(m); m.winEvents.closed();
+  const bypassed = veto(m); await settle();
+  assert.equal(bypassed(), 0); assert.equal(m.dialogCalls.length, 0);
+  const d = loadMain(); closeAttempt(d); d.destroy(); veto(d); await settle();
+  assert.equal(d.dialogCalls.length, 0);
+});
+
+test('close attempt during an active Run: Keep editing does not shut down; discard then real quit drains the judge', async () => {
+  const keep = loadMain();
+  closeAttempt(keep); veto(keep); await settle();
+  assert.equal(keep.shutdowns.length, 0, 'canceled close neither shuts the judge down nor releases it');
+  assert.equal(keep.quits.length, 0);
+  const gone = loadMain({ dialogResponse: () => Promise.resolve({ response: 1 }) });
+  closeAttempt(gone); veto(gone); await settle(); veto(gone); // discarded close allowed through
+  gone.winEvents.closed(); gone.appEvents['window-all-closed']();
+  assert.equal(gone.quits.length, 1);
+  let prevented = false; gone.appEvents['before-quit']({ preventDefault() { prevented = true; } });
+  await settle();
+  assert.equal(prevented, true); assert.equal(gone.shutdowns.length, 1, 'real quit drains the judge');
+});
+
+test('canceled quit stays drained: before-quit is not re-armed and shutdown is not repeated', async () => {
+  const m = loadMain();
+  m.appEvents['before-quit']({ preventDefault() {} }); await settle();
+  assert.equal(m.shutdowns.length, 1);
+  closeAttempt(m); veto(m); await settle();   // quit canceled by unsaved veto, Keep editing
+  m.appEvents['before-quit']({ preventDefault() { assert.fail('already drained; not blocked again'); } });
+  assert.equal(m.shutdowns.length, 1);
 });

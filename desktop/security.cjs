@@ -28,14 +28,53 @@ const FAILURE_MESSAGE = {
   detail: 'Try Restore saved workspace again, or quit and reopen MeCode. Your last saved draft is kept on this computer.',
 };
 
-// Manual, main-owned recovery. Loads ONLY the fixed bundled document; takes no URL/path
-// from any caller. Not confinement: it replaces whatever document is currently shown.
+// Shown only when the user explicitly tries to close/quit and the renderer vetoes unload for
+// unsaved text. Fixed text; it does not claim anything was saved. Default and cancel keep editing.
+const DISCARD_PROMPT = {
+  type: 'warning', buttons: ['Keep editing', 'Discard unsaved changes and quit'], defaultId: 0, cancelId: 0,
+  noLink: true, title: 'MeCode', message: 'MeCode has unsaved changes.',
+  detail: 'Your latest edits are not confirmed saved on this computer. Keep editing to stay in the window, '
+    + 'or discard those unsaved changes and quit. Your last saved draft is kept.',
+};
+
+// Manual, main-owned recovery plus the unsaved-close choice. Loads ONLY the fixed bundled
+// document; takes no URL/path from any caller. Not confinement: it replaces whatever document
+// is currently shown.
 function createWorkspaceRecovery({ win, indexPath, dialog }) {
-  let closing = false;
+  let closePending = false; // 'close' emitted; renderer unload not yet decided. Reset on veto.
+  let closed = false;       // actually closed: terminal, never resurrected.
   let inFlight = false;
-  win.on('close', () => { closing = true; });
-  win.on('closed', () => { closing = true; });
-  const gone = () => closing || win.isDestroyed() || win.webContents.isDestroyed();
+  let prompting = false;
+  let armed = false;        // set only by the explicit Discard choice, consumed by the next 'close'
+  let closeDiscards = false; // the CURRENT pending close was explicitly chosen to discard
+  win.on('close', () => { closePending = true; closeDiscards = armed; armed = false; });
+  win.on('closed', () => { closed = true; closePending = false; closeDiscards = false; armed = false; });
+  const destroyed = () => closed || win.isDestroyed() || win.webContents.isDestroyed();
+  const gone = () => closePending || destroyed();
+
+  // Fires only when the renderer vetoed unload (navigation or close). Never vetoes anything
+  // itself; calls preventDefault (= let unload proceed) only for a close the user explicitly
+  // chose to discard. A navigation is not a close and never gets that override.
+  win.webContents.on('will-prevent-unload', event => {
+    if (destroyed() || !closePending) return;
+    closePending = false; // the close was vetoed: the window lives on
+    if (closeDiscards) { closeDiscards = false; event.preventDefault(); return; }
+    if (prompting) return; // repeated close requests coalesce
+    prompting = true;
+    askDiscard();
+  });
+
+  async function askDiscard() {
+    let choice = 0;
+    try {
+      const result = await dialog.showMessageBox(win, DISCARD_PROMPT);
+      choice = result && result.response;
+    } catch { /* treated as Keep editing */ }
+    prompting = false;
+    if (choice !== 1 || destroyed() || closePending) return;
+    armed = true;
+    try { win.close(); } catch { /* window gone */ } finally { armed = false; }
+  }
 
   async function restore() {
     if (gone() || inFlight) return 'skipped';
