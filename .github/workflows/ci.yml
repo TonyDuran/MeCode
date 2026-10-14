@@ -33,3 +33,12 @@ jobs:
           MECODE_LOCAL_STATE=$(mktemp -d "${RUNNER_TEMP}/mecode-ws.XXXXXX")
           export MECODE_LOCAL_STATE
           python3 -B -W error -m unittest -v test_evidence.StaticBoundary.test_browser_has_no_execution_or_native_transport test_evidence.StaticBoundary.test_generator_identity_failure_before_any_launch
+      - name: Test docker-engine controller mocks (no Docker, Chrome-free)
+        run: |
+          set -euo pipefail
+          TASK_ROOT=$(mktemp -d "${RUNNER_TEMP}/mecode-engine1.XXXXXX")
+          trap 'rm -r -f -- "$TASK_ROOT"' EXIT
+          mkdir -m 700 -- "$TASK_ROOT/home" "$TASK_ROOT/tmp"
+          # Clean environment: no DOCKER_* variables, no inherited HOME/TMPDIR.
+          env -i PATH="$PATH" LANG=C.UTF-8 HOME="$TASK_ROOT/home" TMPDIR="$TASK_ROOT/tmp" \
+            python3 -B -W error -m unittest discover -s prototypes/docker-engine -v
