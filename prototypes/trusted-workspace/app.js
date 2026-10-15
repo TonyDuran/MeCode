@@ -45,19 +45,25 @@ $('record-action').addEventListener('click', () => {
 const draft = $('draft');
 // Plain textarea stays keyboard-accessible: Shift+Tab with no selection moves focus.
 draft.addEventListener('keydown', event => {
-  if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
-  const start = draft.selectionStart, end = draft.selectionEnd;
+  if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey || event.isComposing ||
+      draft.disabled || draft.readOnly) return;
+  const start = draft.selectionStart, end = draft.selectionEnd, direction = draft.selectionDirection;
   if (event.shiftKey && start === end) return;
   event.preventDefault();
   const original = draft.value;
+  const insert = text => {
+    try { return typeof document.execCommand === 'function' && document.execCommand('insertText', false, text); }
+    catch { return false; }
+  };
   if (!event.shiftKey && start === end) {
-    if (document.execCommand('insertText', false, '    ')) updateDraft();
+    if (insert('    ')) updateDraft();
     return;
   }
-  const first = original.lastIndexOf('\n', start - 1) + 1;
-  // A selection ending just after a newline does not include the next line.
-  const finalSelected = original[end - 1] === '\n' ? end - 2 : end - 1;
-  const last = original.lastIndexOf('\n', Math.max(start, finalSelected)) + 1;
+  // Selection is half-open; a selected newline belongs to its preceding line.
+  // Handle position zero explicitly: lastIndexOf(-1) would search at zero in JS.
+  const lineStartAt = position => position <= 0 ? 0 : original.lastIndexOf('\n', position - 1) + 1;
+  const first = lineStartAt(start);
+  const last = lineStartAt(end - 1);
   const after = original.indexOf('\n', last);
   const stop = after < 0 ? original.length : after;
   const lines = original.slice(first, stop).split('\n');
@@ -66,13 +72,25 @@ draft.addEventListener('keydown', event => {
   const replacement = lines.map((line, index) => event.shiftKey
     ? line.slice(widths[index]) : '    ' + line).join('\n');
   draft.setSelectionRange(first, stop);
-  if (!document.execCommand('insertText', false, replacement)) {
-    draft.setSelectionRange(start, end); // No non-undoable fallback; don't risk losing a draft's undo history.
+  if (!insert(replacement)) {
+    draft.setSelectionRange(start, end, direction); // No non-undoable fallback or widened selection on failure.
     return;
   }
-  const delta = widths.reduce((sum, width) => sum + (event.shiftKey ? -width : width), 0);
-  const offset = start > first ? (event.shiftKey ? -Math.min(widths[0], start - first) : widths[0]) : 0;
-  draft.setSelectionRange(start + offset, end + delta);
+  const mapEndpoint = position => {
+    let oldLine = first, delta = 0;
+    for (let index = 0; index < lines.length; index++) {
+      const lineEnd = oldLine + lines[index].length;
+      if (position <= lineEnd) {
+        const within = Math.max(0, position - oldLine);
+        return event.shiftKey ? position + delta - Math.min(widths[index], within)
+          : position + delta + (within > 0 ? widths[index] : 0);
+      }
+      delta += event.shiftKey ? -widths[index] : widths[index];
+      oldLine = lineEnd + 1;
+    }
+    return position + delta;
+  };
+  draft.setSelectionRange(mapEndpoint(start), mapEndpoint(end), direction);
   updateDraft(); // execCommand's input event precedes the final selection adjustment.
 });
 function updateDraft() {

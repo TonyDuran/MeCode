@@ -115,6 +115,25 @@ window.mecodeJudge={capabilities:()=>CAPS,run:request=>{calls.push(request);retu
         self.assertEqual(len(self.b.js('calls')), 1)
         self.finish()
 
+    def test_tab_then_undo_during_run_never_resurrects_verdict(self):
+        self.enabled()
+        source = 'def solve(nums):\n    return 1\n'
+        self.edit(source)
+        self.click()
+        q = f"{Q}('draft')"
+        self.b.js(f"{q}.focus();{q}.setSelectionRange(0,0)")
+        self.b.cdp('Input.dispatchKeyEvent', type='keyDown', key='Tab', code='Tab', windowsVirtualKeyCode=9)
+        self.b.cdp('Input.dispatchKeyEvent', type='keyUp', key='Tab', code='Tab', windowsVirtualKeyCode=9)
+        self.assertNotEqual(self.b.js(f'{q}.value'), source)
+        self.b.cdp('Input.dispatchKeyEvent', type='keyDown', key='z', code='KeyZ', windowsVirtualKeyCode=90, modifiers=2)
+        self.b.cdp('Input.dispatchKeyEvent', type='keyUp', key='z', code='KeyZ', windowsVirtualKeyCode=90, modifiers=2)
+        self.assertEqual(self.b.js(f'{q}.value'), source)
+        self.finish()
+        self.assertIn('discarded', self.b.js(f"{Q}('run-result').textContent"))
+        self.assertNotIn('ACCEPTED', self.b.js(f"{Q}('run-result').textContent"))
+        self.b.wait(f"{Q}('save-status').dataset.state==='saved'")
+        self.assertEqual(self.b.js(RECORD)['current']['draft'], source)
+
     def test_stale_edit_even_if_restored(self):
         self.enabled()
         self.edit('first')
