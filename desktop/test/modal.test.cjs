@@ -472,6 +472,7 @@ test('MF-4 every settle path detaches only this prompt\'s listeners (real EventE
       const w = h.windows[h.windows.length - 1];
       if (name !== 'timeout') h.loaded(w);
       act(h, w);
+      if (name === 'timeout') await new Promise(r => setTimeout(r, 15)); // ref'd test clock for Node 22
       await p;
       assert.equal(w.listenerCount('closed'), 0, `${name}: child window listeners released`);
       assert.equal(w.webContents.listenerCount('did-finish-load'), 0, `${name}: child contents listeners released`);
