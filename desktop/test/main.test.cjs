@@ -108,3 +108,34 @@ test('main selects trusted development/packaged CLI, forwards only the fixed RPC
     events['before-quit']({ preventDefault() { assert.fail('second quit must be allowed'); } });
   }
 });
+
+test('MF-7 repeated before-quit while the drain is in flight shares one shutdown and one resumed quit', async () => {
+  const dirname = path.resolve(__dirname, '..');
+  const events = {}; let quit = 0; let shutdowns = 0; let release; let ready; let prevented = 0;
+  const draining = new Promise(resolve => { release = resolve; });
+  vm.runInNewContext(fs.readFileSync(path.join(dirname, 'main.cjs'), 'utf8'), {
+    __dirname: dirname, process: { platform: 'linux', resourcesPath: '/r', env: {} },
+    require(name) {
+      if (name === 'node:path') return path;
+      if (name === 'node:os') return { userInfo: () => ({ homedir: '/h' }) };
+      if (name === './judge-bridge.cjs') return { createJudgeBridge: () => ({ bind() {}, capabilities() {}, run() {}, shutdown: () => { shutdowns += 1; return draining; } }) };
+      if (name === './security.cjs') return require('../security.cjs');
+      if (name === './modal.cjs') return require('../modal.cjs');
+      return {
+        app: { isPackaged: false, enableSandbox() {}, whenReady: () => ({ then(fn) { ready = fn; } }), on(n, fn) { events[n] = fn; }, quit() { quit += 1; } },
+        ipcMain: { handle() {}, on() {} },
+        session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} } },
+        Menu: { buildFromTemplate: t => t, setApplicationMenu() {} },
+        BrowserWindow: class { constructor() { this.webContents = { on() {}, setWindowOpenHandler() {} }; } on() {} loadFile() {} },
+      };
+    },
+  });
+  ready();
+  for (let i = 0; i < 3; i++) events['before-quit']({ preventDefault() { prevented += 1; } });
+  assert.equal(prevented, 3, 'every request during the drain stays canceled');
+  assert.equal(shutdowns, 1, 'a single in-flight drain');
+  release(); await draining; await Promise.resolve(); await Promise.resolve();
+  assert.equal(quit, 1, 'exactly one resumed app.quit');
+  events['before-quit']({ preventDefault() { assert.fail('drained: the resumed quit must be allowed'); } });
+  assert.equal(shutdowns, 1);
+});

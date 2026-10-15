@@ -17,6 +17,7 @@ const judge = createJudgeBridge({
 app.enableSandbox();
 
 let recovery = null;
+let mainWin = null; // the live workspace window: the explicit owner for Help (never a missing/foreign focus)
 let modal = null; // main-owned fixed-HTML prompts; GTK native dialogs abort the packaged app (QA-FINAL-1)
 const RECOVERY_HELP = {
   type: 'info', buttons: ['OK'], title: 'MeCode',
@@ -36,7 +37,10 @@ function installMenu() {
     ] },
     { role: 'editMenu' },
     { label: 'Help', submenu: [
-      { label: 'About saved-workspace recovery', click: (_item, parent) => { if (modal) modal.choose(parent, RECOVERY_HELP).catch(() => {}); } },
+      // Owner is always the live workspace window; with none alive, choose() shows nothing.
+      { label: 'About saved-workspace recovery', click: () => {
+        if (modal && mainWin && !mainWin.isDestroyed()) modal.choose(mainWin, RECOVERY_HELP).catch(() => {});
+      } },
     ] },
   ]));
 }
@@ -57,6 +61,7 @@ function createWindow() {
   }
   win.webContents.on('will-attach-webview', e => e.preventDefault());
   recovery = createWorkspaceRecovery({ win, indexPath, modal });
+  mainWin = win;
   win.loadFile(indexPath);
   return win;
 }
@@ -65,7 +70,9 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   modal = createModalDialog({ BrowserWindow, ipcMain, htmlPath: path.join(__dirname, 'prompt.html'),
-    preloadPath: path.join(__dirname, 'prompt-preload.cjs') });
+    preloadPath: path.join(__dirname, 'prompt-preload.cjs'),
+    // Dedicated nonpersistent session (no 'persist:' prefix): never the workspace's default session.
+    createSession: () => session.fromPartition('mecode-prompt') });
   ipcMain.handle('mecode:judge:capabilities', event => judge.capabilities(event));
   ipcMain.handle('mecode:judge:run', (event, request) => judge.run(event, request));
   installMenu();
@@ -73,9 +80,12 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-let quitting = false;
+let quitting = false; // the drain finished and the resumed quit was issued
+let draining = false; // a drain is in flight: later requests share it instead of starting another
 app.on('before-quit', event => {
   if (quitting) return;
   event.preventDefault();
+  if (draining) return;
+  draining = true;
   judge.shutdown().then(() => { quitting = true; app.quit(); });
 });

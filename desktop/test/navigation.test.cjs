@@ -114,7 +114,7 @@ test('the two-method judge bridge is unchanged', () => {
 // ---------------------------------------------------------------- main harness
 function loadMain({ loadFile, dialogResponse } = {}) {
   const closes = []; const shutdowns = []; const quits = [];
-  const ipc = {}; const appEvents = {}; const dialogCalls = []; const loads = []; const nativeDialogUse = []; let modalOptions;
+  const ipc = {}; const appEvents = {}; const dialogCalls = []; const loads = []; const nativeDialogUse = []; const partitions = []; let modalOptions;
   let ready; let template; let applied; let currentURL = INDEX_URL; let destroyed = false;
   const winEvents = {}; const wcEvents = {}; let openHandler; let windowOptions;
   const win = {
@@ -135,7 +135,8 @@ function loadMain({ loadFile, dialogResponse } = {}) {
     app: { isPackaged: false, enableSandbox() {}, whenReady: () => ({ then(fn) { ready = fn; } }),
       on(n, fn) { appEvents[n] = fn; }, quit() { quits.push(1); } },
     ipcMain: { handle(n, fn) { ipc[n] = fn; }, on() {} },
-    session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} } },
+    session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} },
+      fromPartition(name) { partitions.push(name); return { partition: name }; } },
     BrowserWindow: class { constructor(o) { windowOptions = o; return win; } static getAllWindows() { return []; } },
     Menu: { buildFromTemplate(t) { template = t; return { template: t }; }, setApplicationMenu(m) { applied = m; } },
     // GTK native dialogs abort the real package (QA-FINAL-1): any use is a test failure.
@@ -164,7 +165,7 @@ function loadMain({ loadFile, dialogResponse } = {}) {
     return null;
   };
   return {
-    win, loads, dialogCalls, nativeDialogUse, modalOptions: () => modalOptions, ipc, winEvents, wcEvents, appEvents, closes, shutdowns, quits, windowOptions, openHandler,
+    win, loads, dialogCalls, nativeDialogUse, partitions, modalOptions: () => modalOptions, ipc, winEvents, wcEvents, appEvents, closes, shutdowns, quits, windowOptions, openHandler,
     template: () => template, applied: () => applied,
     restore: () => find(template, /^Restore saved workspace$/),
     help: () => find(template, /recovery/i),
@@ -216,6 +217,34 @@ test('QA-FINAL-1: no GTK/native dialog is ever used; every prompt goes through t
   const opts = m.modalOptions();
   assert.equal(path.basename(opts.htmlPath), 'prompt.html');
   assert.equal(path.basename(opts.preloadPath), 'prompt-preload.cjs');
+});
+
+test('MF-6 main hands the prompt a dedicated in-memory partition, never the default or a persistent one', () => {
+  const m = loadMain();
+  const ses = m.modalOptions().createSession();
+  assert.equal(m.partitions.length, 1);
+  assert.match(m.partitions[0], /^mecode-prompt/);
+  assert.doesNotMatch(m.partitions[0], /^persist:/);
+  assert.equal(ses.partition, m.partitions[0]);
+});
+
+test('MF-4 Help resolves to the live application window, not a missing/foreign focused window; none alive = no prompt', async () => {
+  const m = loadMain();
+  m.help().click({}, undefined); await flush();
+  assert.equal(m.dialogCalls.length, 1);
+  assert.equal(m.dialogCalls[0][0], m.win, 'owner is the live workspace window');
+  const dead = loadMain(); dead.destroy();
+  dead.help().click({}, undefined); await flush();
+  assert.equal(dead.dialogCalls.length, 0, 'no live owner: nothing is shown');
+});
+
+test('MF-5 the close prompt is a fixed discard mode; Help and failure feedback are informational', async () => {
+  const m = loadMain({ loadFile: n => (n === 1 ? Promise.resolve() : Promise.reject(new Error('x'))) });
+  m.help().click({}, m.win);
+  m.setURL('about:blank'); m.restore().click({}, m.win); await settle();
+  m.setURL(INDEX_URL);
+  closeAttempt(m); veto(m); await settle();
+  assert.deepEqual(m.dialogCalls.map(call => call[1].mode), [undefined, undefined, 'discard']);
 });
 
 test('restore off-workspace calls win.loadFile(indexPath) only, ignoring any menu/renderer arguments', async () => {

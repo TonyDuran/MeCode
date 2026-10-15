@@ -32,7 +32,7 @@ const FAILURE_MESSAGE = {
 // unsaved text. Fixed text; it does not claim anything was saved. Default and cancel keep editing.
 const DISCARD_PROMPT = {
   type: 'warning', buttons: ['Keep editing', 'Discard unsaved changes and quit'], defaultId: 0, cancelId: 0,
-  noLink: true, title: 'MeCode', message: 'MeCode has unsaved changes.',
+  mode: 'discard', noLink: true, title: 'MeCode', message: 'MeCode has unsaved changes.',
   detail: 'Your latest edits are not confirmed saved on this computer. Keep editing to stay in the window, '
     + 'or discard those unsaved changes and quit. Your last saved draft is kept.',
 };
@@ -48,8 +48,14 @@ function createWorkspaceRecovery({ win, indexPath, modal }) {
   let armed = false;        // set only by the explicit Discard choice, consumed by the next 'close'
   let closeDiscards = false; // the CURRENT pending close was explicitly chosen to discard
   let permitted = false;     // the explicit Discard override was applied: the close is completing
-  win.on('close', () => { closePending = true; closeDiscards = armed; permitted = false; armed = false; });
+  let generation = 0;        // parent document generation: bumped on every main-frame replacement
+  let epoch = 0;             // bumped when a close request/prompt starts: older Restore feedback is stale
+  win.on('close', () => { closePending = true; epoch += 1; closeDiscards = armed; permitted = false; armed = false; });
   win.on('closed', () => { closed = true; closePending = false; closeDiscards = false; permitted = false; armed = false; });
+  // Consent given for one document must never apply to its replacement (same-URL reload included).
+  win.webContents.on('did-start-navigation', details => {
+    if (details && details.isMainFrame && !details.isSameDocument) { generation += 1; closeDiscards = false; }
+  });
   const destroyed = () => closed || win.isDestroyed() || win.webContents.isDestroyed();
   const gone = () => closePending || destroyed();
 
@@ -72,28 +78,31 @@ function createWorkspaceRecovery({ win, indexPath, modal }) {
   });
 
   async function askDiscard() {
+    const asked = generation;
+    epoch += 1;
     let choice = 0;
     try {
       const result = await modal.choose(win, DISCARD_PROMPT);
       choice = result && result.response;
     } catch { /* treated as Keep editing */ }
     prompting = false;
-    if (choice !== 1 || destroyed() || closePending) return;
+    if (choice !== 1 || destroyed() || closePending || asked !== generation) return;
     armed = true;
     try { win.close(); } catch { /* window gone */ } finally { armed = false; }
   }
 
   async function restore() {
-    if (gone() || inFlight) return 'skipped';
+    if (gone() || inFlight || prompting) return 'skipped'; // never replace the document under an open prompt
     let url;
     try { url = win.webContents.getURL(); } catch { return 'skipped'; }
     if (allowsNavigation(url, indexPath)) return 'at_workspace';
     inFlight = true; // set before awaiting so repeated activation coalesces
+    const started = epoch;
     try {
       await win.loadFile(indexPath);
       return 'restored';
     } catch {
-      if (!gone()) {
+      if (!gone() && !prompting && started === epoch) {
         try { await modal.choose(win, FAILURE_MESSAGE); } catch { /* bounded feedback only */ }
       }
       return 'failed';
