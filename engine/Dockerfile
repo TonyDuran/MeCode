@@ -1,7 +1,7 @@
 # Provisioning NOT run by the app. Build once with network access you are authorized to use:
 #   docker build -t mecode-engine:v2 engine/
-# Base pinned by digest observed locally by Talos (T01): python 3.14.8 / Debian trixie.
-FROM python@sha256:cfe2e24a75302a15934d37c2d86412893c0aa934dc3a97cbb439d04c01890ca9
+# Base: python:3.14-slim, pinned by the digest present locally (pulled by Metis, T04).
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
 RUN apt-get update \
  && apt-get install -y --no-install-recommends nodejs g++ gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/* \

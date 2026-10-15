@@ -24,14 +24,14 @@ function fakeSpawn(script) {
     const send = (o) => child.stdout.write(`${JSON.stringify({ v: 1, ...o })}\n`);
     let buf = '';
     child.stdin.on('data', (d) => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const l = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1); script.onRun && script.onRun(l, send, child); } });
-    setImmediate(() => { if (!script.noReady) send({ type: 'ready', languages: [{ id: 'python', version: 'fake' }], controls: {} }); });
+    setImmediate(() => { if (!script.noReady) send({ type: 'ready', languages: [{ id: 'python', version: 'fake' }], controls: { memoryMax: String(512 * 1048576), pidsMax: '64', cpuMax: '100000 100000', uid: 65534 } }); });
     return child;
   };
 }
 const dockerOk = (log = [], { oom = 'false', leftover = '' } = {}) => async (args) => {
   log.push(args.join(' '));
   if (args[0] === 'inspect') return { code: 0, stdout: `${oom}\n`, stderr: '' };
-  if (args[0] === 'ps') return { code: 0, stdout: leftover, stderr: '' };
+  if (args[0] === 'ps') return { code: 0, stdout: args.join(' ').includes('name=^') ? leftover : '', stderr: '' };
   return { code: 0, stdout: 'x\n', stderr: '' };
 };
 
