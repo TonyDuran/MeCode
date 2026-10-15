@@ -386,6 +386,8 @@ test('MF-3 the prompt is shown only after the preload acknowledges; missing ackn
   h.finishLoad(w);
   assert.equal(w.sent.length, 1, 'INIT sent');
   assert.equal(w.shown, 0, 'not shown on did-finish-load alone');
+  // Keep the test process alive until the production timer (unref'd in Electron) fires.
+  await new Promise(r => setTimeout(r, 30));
   assert.deepEqual(await p, { response: 0 });                                  // no ack: bounded startup still applies
   assert.equal(w.destroyed, true); assert.equal(w.shown, 0);
 });
