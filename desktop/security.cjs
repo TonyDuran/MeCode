@@ -50,12 +50,23 @@ function createWorkspaceRecovery({ win, indexPath, modal }) {
   let permitted = false;     // the explicit Discard override was applied: the close is completing
   let generation = 0;        // parent document generation: bumped on every main-frame replacement
   let epoch = 0;             // bumped when a close request/prompt starts: older Restore feedback is stale
+  let attempt = null;        // the in-flight Restore's own load identity (see restore())
   win.on('close', () => { closePending = true; epoch += 1; closeDiscards = armed; permitted = false; armed = false; });
   win.on('closed', () => { closed = true; closePending = false; closeDiscards = false; permitted = false; armed = false; });
   // Consent given for one document must never apply to its replacement (same-URL reload included).
   win.webContents.on('did-start-navigation', details => {
-    if (details && details.isMainFrame && !details.isSameDocument) { generation += 1; closeDiscards = false; }
+    if (details && details.isMainFrame && !details.isSameDocument) {
+      generation += 1; closeDiscards = false;
+      // The in-flight Restore owns exactly ONE main-frame navigation: the first one to the workspace
+      // index. Any other main-frame navigation supersedes it, so its late failure is stale.
+      if (attempt) {
+        if (!attempt.ownSeen && allowsNavigation(details.url, indexPath)) attempt.ownSeen = true;
+        else attempt.superseded = true;
+      }
+    }
   });
+  // Renderer loss destroys the document the Restore feedback would describe.
+  win.webContents.on('render-process-gone', () => { if (attempt) attempt.superseded = true; });
   const destroyed = () => closed || win.isDestroyed() || win.webContents.isDestroyed();
   const gone = () => closePending || destroyed();
 
@@ -98,15 +109,17 @@ function createWorkspaceRecovery({ win, indexPath, modal }) {
     if (allowsNavigation(url, indexPath)) return 'at_workspace';
     inFlight = true; // set before awaiting so repeated activation coalesces
     const started = epoch;
+    const mine = attempt = { ownSeen: false, superseded: false };
     try {
       await win.loadFile(indexPath);
       return 'restored';
     } catch {
-      if (!gone() && !prompting && started === epoch) {
+      if (!gone() && !prompting && started === epoch && !mine.superseded) {
         try { await modal.choose(win, FAILURE_MESSAGE); } catch { /* bounded feedback only */ }
       }
       return 'failed';
     } finally {
+      if (attempt === mine) attempt = null;
       inFlight = false;
     }
   }

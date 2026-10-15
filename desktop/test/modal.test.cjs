@@ -676,6 +676,52 @@ test('MF-2 a Restore failure that completes after the prompt was dismissed shows
   assert.equal(l.h.windows.length, 1, 'no late error window from the stale Restore');
 });
 
+// P2: Restore feedback is bound to the Restore attempt's own load. Its own main-frame navigation
+// (to the workspace index) keeps feedback; a different/later main-frame navigation or renderer loss
+// supersedes it.
+function startRestore() {
+  let reject;
+  const l = lifecycle({ loadFile: n => (n === 1 ? new Promise((_, r) => { reject = r; }) : Promise.resolve()) });
+  l.setURL('about:blank');
+  const restoring = l.recovery.restore();
+  return { l, restoring, reject: e => reject(e) };
+}
+const INDEX_HREF = pathToFileURL(path.join(DESKTOP, 'workspace', 'index.html')).href;
+
+test('P2 an unrelated main-frame replacement before the Restore rejection shows no late feedback', async () => {
+  const { l, restoring, reject } = startRestore(); await flush();
+  l.win.webContents.emit('did-start-navigation', { ...NAV, url: INDEX_HREF }); // Restore's own load
+  l.win.webContents.emit('did-start-navigation', { ...NAV, url: 'about:blank' }); // superseding replacement
+  reject(new Error('late')); assert.equal(await restoring, 'failed'); await tick();
+  assert.equal(l.h.windows.length, 0, 'no stale modal on the replaced document');
+});
+
+test('P2 a foreign replacement that arrives before any own navigation also suppresses feedback', async () => {
+  const { l, restoring, reject } = startRestore(); await flush();
+  l.win.webContents.emit('did-start-navigation', { ...NAV, url: 'about:blank' });
+  reject(new Error('late')); assert.equal(await restoring, 'failed'); await tick();
+  assert.equal(l.h.windows.length, 0);
+});
+
+test('P2 renderer loss before the Restore rejection shows no late feedback', async () => {
+  const { l, restoring, reject } = startRestore(); await flush();
+  l.win.webContents.emit('did-start-navigation', { ...NAV, url: INDEX_HREF });
+  l.win.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  reject(new Error('late')); assert.equal(await restoring, 'failed'); await tick();
+  assert.equal(l.h.windows.length, 0, 'no stale modal on the lost document');
+});
+
+test('P2 the Restore attempt\'s own navigation failure still shows feedback and Restore can be retried', async () => {
+  const { l, restoring, reject } = startRestore(); await flush();
+  l.win.webContents.emit('did-start-navigation', { ...NAV, url: INDEX_HREF });
+  reject(new Error('own failure')); await tick();
+  assert.equal(l.h.windows.length, 1, 'normal failure feedback retained');
+  l.h.loaded(l.h.windows[0]); l.h.send(l.h.windows[0], 0); await tick();
+  assert.equal(await restoring, 'failed');
+  assert.equal(await l.recovery.restore(), 'restored', 'retry eligible: a new attempt runs');
+  assert.equal(l.loads.length, 2);
+});
+
 test('MF-4/MF-5 recovery keeps its own closed listener; repeated Keep prompts do not accumulate listeners', async () => {
   const l = lifecycle();
   const base = { closed: l.win.listenerCount('closed'), nav: l.win.webContents.listenerCount('did-start-navigation') };
