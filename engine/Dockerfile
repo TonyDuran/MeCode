@@ -7,6 +7,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && python3 --version && node --version && g++ --version | head -1 && gcc --version | head -1
 COPY runner.py adapters.py /opt/mecode/
+RUN chmod 0755 /opt/mecode && chmod 0644 /opt/mecode/runner.py /opt/mecode/adapters.py
 USER 65534:65534
 WORKDIR /work
 ENTRYPOINT ["python3", "-I", "/opt/mecode/runner.py"]
