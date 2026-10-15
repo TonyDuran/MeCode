@@ -1,0 +1,13 @@
+{
+  "name": "mecode-v2",
+  "version": "0.0.1-t02",
+  "private": true,
+  "description": "MeCode V2 vertical slice: Electron app + containerized runner",
+  "main": "src/main.cjs",
+  "license": "UNLICENSED",
+  "scripts": {
+    "test": "node --test \"tests/unit/*.test.cjs\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "package": "node scripts/package.cjs"
+  }
+}
