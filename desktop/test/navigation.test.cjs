@@ -114,7 +114,7 @@ test('the two-method judge bridge is unchanged', () => {
 // ---------------------------------------------------------------- main harness
 function loadMain({ loadFile, dialogResponse } = {}) {
   const closes = []; const shutdowns = []; const quits = [];
-  const ipc = {}; const appEvents = {}; const dialogCalls = []; const loads = [];
+  const ipc = {}; const appEvents = {}; const dialogCalls = []; const loads = []; const nativeDialogUse = []; let modalOptions;
   let ready; let template; let applied; let currentURL = INDEX_URL; let destroyed = false;
   const winEvents = {}; const wcEvents = {}; let openHandler; let windowOptions;
   const win = {
@@ -134,12 +134,14 @@ function loadMain({ loadFile, dialogResponse } = {}) {
   const electron = {
     app: { isPackaged: false, enableSandbox() {}, whenReady: () => ({ then(fn) { ready = fn; } }),
       on(n, fn) { appEvents[n] = fn; }, quit() { quits.push(1); } },
-    ipcMain: { handle(n, fn) { ipc[n] = fn; } },
+    ipcMain: { handle(n, fn) { ipc[n] = fn; }, on() {} },
     session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} } },
     BrowserWindow: class { constructor(o) { windowOptions = o; return win; } static getAllWindows() { return []; } },
     Menu: { buildFromTemplate(t) { template = t; return { template: t }; }, setApplicationMenu(m) { applied = m; } },
-    dialog: { showMessageBox(...args) { dialogCalls.push(args); return dialogResponse ? dialogResponse(dialogCalls.length) : Promise.resolve({ response: 0 }); } },
+    // GTK native dialogs abort the real package (QA-FINAL-1): any use is a test failure.
+    get dialog() { nativeDialogUse.push(1); throw new Error('native dialog must never be used'); },
   };
+  const fakeModal = { choose(...args) { dialogCalls.push(args); return dialogResponse ? dialogResponse(dialogCalls.length) : Promise.resolve({ response: 0 }); } };
   vm.runInNewContext(fs.readFileSync(path.join(DESKTOP, 'main.cjs'), 'utf8'), {
     __dirname: DESKTOP, process: { platform: 'linux', resourcesPath: '/r', env: {} }, console,
     require(name) {
@@ -147,6 +149,7 @@ function loadMain({ loadFile, dialogResponse } = {}) {
       if (name === 'node:os') return { userInfo: () => ({ homedir: '/account/home' }) };
       if (name === './judge-bridge.cjs') return { createJudgeBridge: () => ({ bind() {}, capabilities() {}, run() {}, shutdown: () => { shutdowns.push(1); return Promise.resolve(); } }) };
       if (name === './security.cjs') return require('../security.cjs');
+      if (name === './modal.cjs') return { createModalDialog(o) { modalOptions = o; return fakeModal; } };
       assert.equal(name, 'electron');
       return electron;
     },
@@ -161,7 +164,7 @@ function loadMain({ loadFile, dialogResponse } = {}) {
     return null;
   };
   return {
-    win, loads, dialogCalls, ipc, winEvents, wcEvents, appEvents, closes, shutdowns, quits, windowOptions, openHandler,
+    win, loads, dialogCalls, nativeDialogUse, modalOptions: () => modalOptions, ipc, winEvents, wcEvents, appEvents, closes, shutdowns, quits, windowOptions, openHandler,
     template: () => template, applied: () => applied,
     restore: () => find(template, /^Restore saved workspace$/),
     help: () => find(template, /recovery/i),
@@ -196,6 +199,23 @@ test('help text states LAST SAVED draft only and unsaved edits may be lost', asy
   const text = JSON.stringify(m.dialogCalls[0]);
   assert.match(text, /last saved/i); assert.match(text, /unsaved/i);
   assert.equal(m.loads.length, 1, 'help never loads anything');
+  assert.equal(m.dialogCalls[0][0], m.win, 'help is parented to the clicked window');
+  assert.equal(m.nativeDialogUse.length, 0);
+});
+
+test('QA-FINAL-1: no GTK/native dialog is ever used; every prompt goes through the main-owned modal', async () => {
+  const m = loadMain({ loadFile: n => (n === 1 ? Promise.resolve() : Promise.reject(new Error('x'))) });
+  m.help().click({}, m.win);
+  m.setURL('about:blank'); m.restore().click({}, m.win); await settle();   // failed-load feedback
+  m.setURL(INDEX_URL);
+  closeAttempt(m); veto(m); await settle();                                // unsaved close
+  assert.equal(m.dialogCalls.length, 3);
+  assert.equal(m.nativeDialogUse.length, 0, 'electron.dialog must not be touched');
+  const src = ['main.cjs', 'security.cjs'].map(f => fs.readFileSync(path.join(DESKTOP, f), 'utf8')).join('\n');
+  assert.doesNotMatch(src, /showMessageBox|showErrorBox|\bdialog\b/);
+  const opts = m.modalOptions();
+  assert.equal(path.basename(opts.htmlPath), 'prompt.html');
+  assert.equal(path.basename(opts.preloadPath), 'prompt-preload.cjs');
 });
 
 test('restore off-workspace calls win.loadFile(indexPath) only, ignoring any menu/renderer arguments', async () => {
@@ -333,8 +353,8 @@ test('Keep editing leaves the window usable, Restore eligible, and a later close
   assert.equal(m.shutdowns.length, 0, 'a canceled close never starts judge shutdown by itself');
 });
 
-test('a dialog failure is treated as Keep editing', async () => {
-  const m = loadMain({ dialogResponse: () => Promise.reject(new Error('no display')) });
+test('a modal failure is treated as Keep editing', async () => {
+  const m = loadMain({ dialogResponse: () => Promise.reject(new Error('modal failed')) });
   closeAttempt(m); veto(m); await settle();
   assert.equal(m.closes.length, 0);
   m.setURL('about:blank'); m.restore().click({}, m.win); await flush();

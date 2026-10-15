@@ -19,14 +19,14 @@ test('desktop denies both permission requests and checks before loading the docu
   const electron = {
     app: { enableSandbox() { calls.push('sandbox'); }, whenReady() { return { then(fn) { ready = fn; } }; },
       on(name, fn) { appHandlers[name] = fn; } },
-    ipcMain: { handle(name, fn) { ipc[name] = fn; calls.push(name); } },
+    ipcMain: { handle(name, fn) { ipc[name] = fn; calls.push(name); }, on() {} },
     BrowserWindow: class {
       constructor(options) { windowOptions = options; this.webContents = { setWindowOpenHandler() {}, on() {} }; }
       on() {} isDestroyed() { return false; }
       loadFile(file) { calls.push('load'); assert.equal(path.basename(file), 'index.html'); }
       static getAllWindows() { return []; }
     },
-    session, Menu: { buildFromTemplate: t => t, setApplicationMenu() {} }, dialog: {},
+    session, Menu: { buildFromTemplate: t => t, setApplicationMenu() {} },
   };
   const original = Module._load;
   try {
@@ -75,13 +75,14 @@ test('main selects trusted development/packaged CLI, forwards only the fixed RPC
         if (name === 'node:os') return { userInfo: () => ({ homedir: '/account/home' }) };
         if (name === './judge-bridge.cjs') return { createJudgeBridge(value) { options = value; return judge; } };
         if (name === './security.cjs') return require('../security.cjs');
+        if (name === './modal.cjs') return require('../modal.cjs');
         assert.equal(name, 'electron');
         return {
           app: { isPackaged, enableSandbox() {}, whenReady: () => ({ then(fn) { ready = fn; } }),
             on(name, fn) { events[name] = fn; }, quit() { quit += 1; } },
-          ipcMain: { handle(name, fn) { ipc[name] = fn; } },
+          ipcMain: { handle(name, fn) { ipc[name] = fn; }, on() {} },
           session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} } },
-          Menu: { buildFromTemplate: t => t, setApplicationMenu() {} }, dialog: {},
+          Menu: { buildFromTemplate: t => t, setApplicationMenu() {} },
           BrowserWindow: class {
             constructor() { this.webContents = { on() {}, setWindowOpenHandler() {} }; }
             on() {}

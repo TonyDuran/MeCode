@@ -1,8 +1,9 @@
 const path = require('node:path');
 const { userInfo } = require('node:os');
-const { app, BrowserWindow, session, ipcMain, Menu, dialog } = require('electron');
+const { app, BrowserWindow, session, ipcMain, Menu } = require('electron');
 const { browserPreferences, allowsNavigation, createWorkspaceRecovery } = require('./security.cjs');
 const { createJudgeBridge } = require('./judge-bridge.cjs');
+const { createModalDialog } = require('./modal.cjs');
 
 const indexPath = path.join(__dirname, 'workspace', 'index.html');
 // Snapshot launch opt-in; capabilities deliberately do not probe Python/Docker.
@@ -16,6 +17,7 @@ const judge = createJudgeBridge({
 app.enableSandbox();
 
 let recovery = null;
+let modal = null; // main-owned fixed-HTML prompts; GTK native dialogs abort the packaged app (QA-FINAL-1)
 const RECOVERY_HELP = {
   type: 'info', buttons: ['OK'], title: 'MeCode',
   message: 'Restore saved workspace',
@@ -34,7 +36,7 @@ function installMenu() {
     ] },
     { role: 'editMenu' },
     { label: 'Help', submenu: [
-      { label: 'About saved-workspace recovery', click: () => { dialog.showMessageBox(RECOVERY_HELP).catch(() => {}); } },
+      { label: 'About saved-workspace recovery', click: (_item, parent) => { if (modal) modal.choose(parent, RECOVERY_HELP).catch(() => {}); } },
     ] },
   ]));
 }
@@ -54,7 +56,7 @@ function createWindow() {
     });
   }
   win.webContents.on('will-attach-webview', e => e.preventDefault());
-  recovery = createWorkspaceRecovery({ win, indexPath, dialog });
+  recovery = createWorkspaceRecovery({ win, indexPath, modal });
   win.loadFile(indexPath);
   return win;
 }
@@ -62,6 +64,8 @@ function createWindow() {
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
+  modal = createModalDialog({ BrowserWindow, ipcMain, htmlPath: path.join(__dirname, 'prompt.html'),
+    preloadPath: path.join(__dirname, 'prompt-preload.cjs') });
   ipcMain.handle('mecode:judge:capabilities', event => judge.capabilities(event));
   ipcMain.handle('mecode:judge:run', (event, request) => judge.run(event, request));
   installMenu();

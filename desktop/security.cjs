@@ -40,7 +40,7 @@ const DISCARD_PROMPT = {
 // Manual, main-owned recovery plus the unsaved-close choice. Loads ONLY the fixed bundled
 // document; takes no URL/path from any caller. Not confinement: it replaces whatever document
 // is currently shown.
-function createWorkspaceRecovery({ win, indexPath, dialog }) {
+function createWorkspaceRecovery({ win, indexPath, modal }) {
   let closePending = false; // 'close' emitted; renderer unload not yet decided. Reset on veto.
   let closed = false;       // actually closed: terminal, never resurrected.
   let inFlight = false;
@@ -62,7 +62,7 @@ function createWorkspaceRecovery({ win, indexPath, dialog }) {
     if (destroyed() || !closePending || permitted) return;
     if (closeDiscards) {
       // preventDefault = ignore the veto and let unload proceed. The close is NOT canceled, so
-      // closePending stays true (Restore and late error dialogs stay suppressed) until 'closed'.
+      // closePending stays true (Restore and late error prompts stay suppressed) until 'closed'.
       closeDiscards = false; permitted = true; event.preventDefault(); return;
     }
     closePending = false; // the close was truly vetoed: the window lives on
@@ -74,7 +74,7 @@ function createWorkspaceRecovery({ win, indexPath, dialog }) {
   async function askDiscard() {
     let choice = 0;
     try {
-      const result = await dialog.showMessageBox(win, DISCARD_PROMPT);
+      const result = await modal.choose(win, DISCARD_PROMPT);
       choice = result && result.response;
     } catch { /* treated as Keep editing */ }
     prompting = false;
@@ -94,7 +94,7 @@ function createWorkspaceRecovery({ win, indexPath, dialog }) {
       return 'restored';
     } catch {
       if (!gone()) {
-        try { await dialog.showMessageBox(win, FAILURE_MESSAGE); } catch { /* bounded feedback only */ }
+        try { await modal.choose(win, FAILURE_MESSAGE); } catch { /* bounded feedback only */ }
       }
       return 'failed';
     } finally {

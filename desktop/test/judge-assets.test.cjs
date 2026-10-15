@@ -27,7 +27,8 @@ test('judge stage replaces stale files and copies only three trusted Python asse
 
 test('app packaging is an allowlist, not an expanding test/fixture denylist', () => {
   for (const name of ['', '/', '/package.json', '/main.cjs', '/security.cjs', '/preload.cjs',
-    '/judge-bridge.cjs', '/judge-assets.cjs', '/workspace', '/workspace/index.html', '/workspace/app.js', '/workspace/run-ui.js']) {
+    '/judge-bridge.cjs', '/judge-assets.cjs', '/modal.cjs', '/prompt.html', '/prompt-preload.cjs',
+    '/workspace', '/workspace/index.html', '/workspace/app.js', '/workspace/run-ui.js']) {
     assert.equal(ignoreAppPath(name), false, name);
   }
   for (const name of ['/test', '/test/main.test.cjs', '/judge', '/judge/controller.py',
