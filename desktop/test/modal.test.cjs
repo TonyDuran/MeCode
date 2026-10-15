@@ -318,7 +318,10 @@ test('a choice is ignored once the modal no longer shows the exact bundled docum
 
 test('a page that never becomes ready times out to Keep (bounded startup); reading time is not bounded', async () => {
   const stuck = harness({ startupMs: 5, loadFile: () => new Promise(() => {}) });
-  assert.deepEqual(await stuck.modal.choose(stuck.parent, SPEC), { response: 0 });
+  const stuckResult = stuck.modal.choose(stuck.parent, SPEC);
+  // Production unrefs its startup timer; keep this test's clock referenced on Node 22 CI.
+  await new Promise(r => setTimeout(r, 15));
+  assert.deepEqual(await stuckResult, { response: 0 });
   assert.equal(stuck.windows[0].destroyed, true);
   const reading = harness({ startupMs: 5 });
   const p = reading.modal.choose(reading.parent, SPEC);
