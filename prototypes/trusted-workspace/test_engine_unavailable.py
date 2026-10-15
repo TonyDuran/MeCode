@@ -35,6 +35,19 @@ class StaticNotice(unittest.TestCase):
         self.assertNotIn('execution-actions', (ROOT/'app.js').read_text())
         self.assertNotIn('execution-actions', (ROOT/'persistence.js').read_text())
 
+    def test_optional_hints_are_static_and_collapsed(self):
+        template = (ROOT/'workspace.html.in').read_text()
+        page = (ROOT/'index.html').read_text()
+        start, end = '<section id="hints"', '</section>'
+        self.assertEqual(template.count(start), 1)
+        hints = template[template.index(start):template.index(end, template.index(start)) + len(end)]
+        self.assertEqual(hints.count('<details class="hint">'), 3)
+        self.assertNotIn('<script', hints)
+        self.assertNotIn('<button', hints)
+        self.assertNotIn(' open', hints)  # Native disclosures begin collapsed.
+        self.assertIn('<code>sum(nums)</code>', hints)
+        self.assertIn(hints, page)
+
     def test_render_existing_preserves_evidence_without_launch(self):
         before = {name: (ROOT/name).read_bytes() for name in
                   ['fixture-evidence.json', 'evidence-contract.js', 'index.html']}

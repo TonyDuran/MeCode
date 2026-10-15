@@ -18,3 +18,9 @@ html[data-theme=light] .save-bar [data-state=error]{color:#873a19}
 .execution #run-result:empty{display:none}
 .execution #run-result[data-state=error]{color:#ffbb95}
 html[data-theme=light] .execution #run-result[data-state=error]{color:#873a19}
+.hints{margin:22px 0;padding:14px 16px;background:var(--raised);border:1px solid var(--line);border-radius:10px}
+.hints h2{margin:0 0 8px;font-size:16px}
+.hints>p{margin:0 0 10px}
+.hints .hint{border-top:1px solid var(--line)}
+.hints .hint summary{cursor:pointer;color:var(--ink);font-size:13px;font-weight:600}
+.hints .hint[open] p{color:var(--muted);margin:0 0 12px 18px}

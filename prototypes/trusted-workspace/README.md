@@ -282,3 +282,14 @@ Chrome-profile sampling race in the developer-only resource guard. The Run UI
 browser test profiles use short deterministic directory names to stay within
 Chrome's UNIX socket path cap. Neither change loosens a host or judge control.
 This addendum has no claim of native packaged UI acceptance or M1 UAT.
+
+## Optional Sum array hints (separate content candidate)
+
+Three native, collapsed `<details>` disclosures give progressive guidance from
+zero as identity, to accumulation, to the Python `sum(nums)` shortcut. They
+live in the statement, not in the recorded inspector or saved workspace. Opening
+a hint neither judges nor saves a draft, marks progress, changes evidence, or
+invokes Run. `test_problem_hints.py` drives a real keyboard disclosure and
+checks that the draft/evidence remain unchanged. This adds content for the one
+existing `sum-array-v1` problem; it is **not** a second judged problem, a new
+fixture, or proof of a multi-problem catalog.
