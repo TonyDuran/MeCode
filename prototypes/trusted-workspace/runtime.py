@@ -4,6 +4,7 @@ import fcntl
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import threading
 import time
@@ -35,7 +36,15 @@ def command(base, headless=False):
 
 
 def owned_bytes():
-    return sum(p.lstat().st_blocks * 512 for p in STATE.rglob('*') if not p.is_symlink())
+    total = 0
+    for path in STATE.rglob('*'):
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue  # Chrome legitimately removes transient files during sampling.
+        if not stat.S_ISLNK(info.st_mode):
+            total += info.st_blocks * 512
+    return total
 
 
 def tree_rss(pid):

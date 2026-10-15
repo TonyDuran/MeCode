@@ -265,3 +265,20 @@ Rollback of the whole prototype: close only this task's browsers first, back up 
 then remove this new prototype directory. Separately remove only its dedicated
 external state directory if draft deletion is intended. Do not touch accepted
 PoCs, merged trusted-judge, other profiles/processes or shared host resources.
+
+## Editor indentation candidate (separate branch; not included in PR #10 package)
+
+Inside the Python textarea, Tab inserts four spaces at a cursor or indents each
+selected line; a selected Shift+Tab removes up to four leading spaces per line.
+With no selection Shift+Tab keeps ordinary reverse keyboard focus so the editor
+is escapable. Selections ending exactly at a newline leave the following line
+alone. The browser's text insertion operation preserves native undo; no draft is
+silently replaced when it is unavailable. Real input events continue to own
+acknowledged autosave and stale-verdict invalidation. The visible editor hint
+names the shortcuts. There is no new IPC, dependency, judge problem, or storage
+schema. `test_editor_indent.py` exercises real headless-Chrome keys, selection,
+save, focus and undo; `test_guard_race.py` covers a pre-existing transient
+Chrome-profile sampling race in the developer-only resource guard. The Run UI
+browser test profiles use short deterministic directory names to stay within
+Chrome's UNIX socket path cap. Neither change loosens a host or judge control.
+This addendum has no claim of native packaged UI acceptance or M1 UAT.

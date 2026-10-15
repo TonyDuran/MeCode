@@ -43,6 +43,38 @@ $('record-action').addEventListener('click', () => {
   selectNav(expanded ? 'problem-nav' : 'results-nav');
 });
 const draft = $('draft');
+// Plain textarea stays keyboard-accessible: Shift+Tab with no selection moves focus.
+draft.addEventListener('keydown', event => {
+  if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
+  const start = draft.selectionStart, end = draft.selectionEnd;
+  if (event.shiftKey && start === end) return;
+  event.preventDefault();
+  const original = draft.value;
+  if (!event.shiftKey && start === end) {
+    if (document.execCommand('insertText', false, '    ')) updateDraft();
+    return;
+  }
+  const first = original.lastIndexOf('\n', start - 1) + 1;
+  // A selection ending just after a newline does not include the next line.
+  const finalSelected = original[end - 1] === '\n' ? end - 2 : end - 1;
+  const last = original.lastIndexOf('\n', Math.max(start, finalSelected)) + 1;
+  const after = original.indexOf('\n', last);
+  const stop = after < 0 ? original.length : after;
+  const lines = original.slice(first, stop).split('\n');
+  const widths = lines.map(line => event.shiftKey ? Math.min(4, (line.match(/^ */) || [''])[0].length) : 4);
+  if (event.shiftKey && widths.every(width => width === 0)) return;
+  const replacement = lines.map((line, index) => event.shiftKey
+    ? line.slice(widths[index]) : '    ' + line).join('\n');
+  draft.setSelectionRange(first, stop);
+  if (!document.execCommand('insertText', false, replacement)) {
+    draft.setSelectionRange(start, end); // No non-undoable fallback; don't risk losing a draft's undo history.
+    return;
+  }
+  const delta = widths.reduce((sum, width) => sum + (event.shiftKey ? -width : width), 0);
+  const offset = start > first ? (event.shiftKey ? -Math.min(widths[0], start - first) : widths[0]) : 0;
+  draft.setSelectionRange(start + offset, end + delta);
+  updateDraft(); // execCommand's input event precedes the final selection adjustment.
+});
 function updateDraft() {
   const lines = draft.value.split('\n');
   $('line-numbers').textContent = lines.map((_, i) => i + 1).join('\n');

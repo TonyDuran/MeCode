@@ -1,4 +1,5 @@
 """Experimental Run renderer integration. Mock bridge only; never execute source."""
+import hashlib
 import json
 import time
 import unittest
@@ -12,7 +13,8 @@ Q = "document.getElementById"
 
 class RunUI(unittest.TestCase):
     def setUp(self):
-        base = STATE / self._testMethodName
+        # Chrome's SingletonSocket has a strict UNIX path cap; keep profiles short.
+        base = STATE / ('run-' + hashlib.sha256(self._testMethodName.encode()).hexdigest()[:12])
         base.mkdir(exist_ok=False)
         chrome_pipe.BASE = base
         chrome_pipe.OUT = STATE / 'run-ui-report'
