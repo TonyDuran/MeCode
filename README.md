@@ -2,6 +2,12 @@
 
 An offline-first desktop coding-practice tool, intended for Linux and Apple Silicon macOS. The goal is a focused place to work through algorithm problems, write solutions, run tests, and track progress locally.
 
+## An agent-built experiment
+
+MeCode is created entirely through AI-agent work, under human direction and approval. It is both a coding-practice product attempt and an experiment in the boundaries and efficacy of multi-agent software development: can specialized agents plan, implement, review, independently test, and deliver a working application together?
+
+The experiment evaluates the whole delivery process—not just generated code or green tests—including coordination, handoffs, rework, integration, and honest reporting of failures and limitations. Multi-agent effectiveness is a question being tested, not a result assumed in advance.
+
 ## The vision
 
 - A curated problem catalog organized around common algorithm and data-structure patterns.
