@@ -29,7 +29,7 @@ function docker(args, timeout = 60000) {
   return { code: r.error ? -1 : r.status, stdout: r.stdout || '', stderr: ((r.stderr || '') + (r.error ? String(r.error.message) : '')).trim().slice(0, 400) };
 }
 const inspect = (ref) => {
-  const r = docker(['image', 'inspect', ref, '--format', '{{.Id}}|{{.Os}}|{{.Architecture}}|{{.Variant}}'], 20000);
+  const r = docker(['image', 'inspect', ref, '--format', '{{.Id}}|{{.Os}}|{{.Architecture}}|{{with index . "Variant"}}{{.}}{{end}}'], 20000);
   if (r.code !== 0) return null;
   const [id, os, architecture, variant] = r.stdout.trim().split('|');
   return { id, os, architecture, variant: variant || '' };

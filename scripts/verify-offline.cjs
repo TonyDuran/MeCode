@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global document -- referenced only inside page.waitForFunction callbacks, which run in the browser */
 'use strict';
 // Task-owned offline proof (development checkout; NOT shipped). Real Docker, real extracted Linux package, real engine, no mocks.
 //   node scripts/verify-offline.cjs --package <linux .tar.gz> --out <new evidence dir> [--image mecode-engine:v2] [--browser]
@@ -45,7 +46,7 @@ const check = (name, ok, detail = '') => {
   return !!ok;
 };
 const imgInfo = (ref) => {
-  const r = dk('image', 'inspect', ref, '--format', '{{.Id}}|{{.Os}}/{{.Architecture}}|{{.Variant}}');
+  const r = dk('image', 'inspect', ref, '--format', '{{.Id}}|{{.Os}}/{{.Architecture}}|{{with index . "Variant"}}{{.}}{{end}}');
   return r.code === 0 ? r.stdout.trim() : null;
 };
 const containerSnapshot = () =>
