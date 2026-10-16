@@ -303,7 +303,7 @@ test('P1-8 failed state write leaves memory unchanged; result reports persistenc
       return fs.promises.rename(a, b);
     },
   };
-  const ans = { 'example-1': '2', 'example-2': '6', 'check-single': '0', 'check-all-equal': '15', 'check-negatives': '2' };
+  const ans = Object.fromEntries(JSON.parse(fs.readFileSync(path.join(__dirname, '../../packs/core.json'), 'utf8')).problems[0].tests.map((t) => [t.id, t.expected.trim()]));
   const r = await rig(
     {
       onRun: (run, send) => {
@@ -356,7 +356,7 @@ test('P2-10 import by pack ID replaces bundled core.json with confirmation; snap
   assert.equal(c.error.code, 'CONFLICT');
   const ok = await cat.import(text, true);
   assert.equal(ok.ok, true, JSON.stringify(ok));
-  assert.equal(fs.readdirSync(path.join(d, 'packs')).length, 1);
+  assert.equal(fs.readdirSync(path.join(d, 'packs')).length, 2, 'core.json (replaced in place) + the bundled mecode-patterns.json');
   const bad = new Catalog(path.join(d, 'packs'), path.join(d, 'nodir', 'x', 'lg.json'));
   bad._snapshot = async () => {
     throw new Error('snap');

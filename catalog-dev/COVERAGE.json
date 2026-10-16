@@ -1,0 +1,1192 @@
+{
+  "summary": {
+    "total": 48,
+    "patterns": 18,
+    "perPattern": {
+      "arrays-hashing": 3,
+      "two-pointers": 3,
+      "sliding-window": 3,
+      "stack": 3,
+      "binary-search": 3,
+      "trees": 3,
+      "heap": 3,
+      "backtracking": 3,
+      "graphs": 3,
+      "dp-1d": 3,
+      "dp-2d": 3,
+      "greedy": 3,
+      "linked-lists": 2,
+      "tries": 2,
+      "advanced-graphs": 2,
+      "intervals": 2,
+      "math-geometry": 2,
+      "bit-manipulation": 2
+    },
+    "perDifficulty": {
+      "easy": 12,
+      "medium": 28,
+      "hard": 8
+    },
+    "totalTests": 549,
+    "totalExamples": 96,
+    "totalChecks": 453,
+    "problemsWithBruteOracle": 48,
+    "problemsWithoutBruteOracle": [],
+    "wrongBaselinesDiscriminating": 48
+  },
+  "problems": {
+    "beacon-pairs": {
+      "pack": "mecode-core",
+      "title": "Beacon Pairs",
+      "difficulty": "easy",
+      "patterns": [
+        "arrays-hashing"
+      ],
+      "examples": 2,
+      "checks": 11,
+      "tests": 13,
+      "referenceExecutedOk": 13,
+      "handAnsweredCases": 8,
+      "bruteOracleStored": 12,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-2",
+        "check-all-equal",
+        "check-edge-1",
+        "check-seed-1",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/beacon-pairs.py"
+    },
+    "bracket-ledger": {
+      "pack": "mecode-core",
+      "title": "Bracket Ledger",
+      "difficulty": "easy",
+      "patterns": [
+        "stack"
+      ],
+      "examples": 2,
+      "checks": 13,
+      "tests": 15,
+      "referenceExecutedOk": 15,
+      "handAnsweredCases": 10,
+      "bruteOracleStored": 14,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-2",
+        "check-edge-1",
+        "check-edge-3"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/bracket-ledger.py"
+    },
+    "steady-streak": {
+      "pack": "mecode-core",
+      "title": "Steady Streak",
+      "difficulty": "easy",
+      "patterns": [
+        "sliding-window"
+      ],
+      "examples": 2,
+      "checks": 11,
+      "tests": 13,
+      "referenceExecutedOk": 13,
+      "handAnsweredCases": 8,
+      "bruteOracleStored": 12,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "check-alternating",
+        "check-edge-1",
+        "check-edge-4",
+        "check-seed-1",
+        "check-seed-3",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": true,
+      "referenceFile": "catalog-dev/refs/steady-streak.py"
+    },
+    "shelf-signatures": {
+      "pack": "mecode-patterns",
+      "title": "Shelf Signatures",
+      "difficulty": "easy",
+      "patterns": [
+        "arrays-hashing"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "check-edge-2",
+        "check-edge-4",
+        "check-seed-2",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": true,
+      "referenceFile": "catalog-dev/refs/shelf-signatures.py"
+    },
+    "ledger-windows": {
+      "pack": "mecode-patterns",
+      "title": "Ledger Windows",
+      "difficulty": "medium",
+      "patterns": [
+        "arrays-hashing"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "example-2",
+        "check-edge-1",
+        "check-seed-2",
+        "check-seed-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/ledger-windows.py"
+    },
+    "calm-stretch": {
+      "pack": "mecode-patterns",
+      "title": "Calm Stretch",
+      "difficulty": "medium",
+      "patterns": [
+        "sliding-window"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "check-edge-3",
+        "check-edge-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": true,
+      "referenceFile": "catalog-dev/refs/calm-stretch.py"
+    },
+    "flavor-limit": {
+      "pack": "mecode-patterns",
+      "title": "Flavor Limit",
+      "difficulty": "medium",
+      "patterns": [
+        "sliding-window"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "check-edge-1",
+        "check-seed-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": true,
+      "referenceFile": "catalog-dev/refs/flavor-limit.py"
+    },
+    "next-warmer-day": {
+      "pack": "mecode-patterns",
+      "title": "Next Warmer Day",
+      "difficulty": "medium",
+      "patterns": [
+        "stack"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-2",
+        "check-edge-2",
+        "check-seed-1",
+        "check-seed-2",
+        "check-seed-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/next-warmer-day.py"
+    },
+    "billboard-skyline": {
+      "pack": "mecode-patterns",
+      "title": "Billboard Skyline",
+      "difficulty": "hard",
+      "patterns": [
+        "stack"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-2",
+        "check-edge-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/billboard-skyline.py"
+    },
+    "lantern-phrase": {
+      "pack": "mecode-patterns",
+      "title": "Lantern Phrase",
+      "difficulty": "easy",
+      "patterns": [
+        "two-pointers"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-1",
+        "check-seed-1",
+        "check-seed-4"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/lantern-phrase.py"
+    },
+    "dock-pairing": {
+      "pack": "mecode-patterns",
+      "title": "Dock Pairing",
+      "difficulty": "medium",
+      "patterns": [
+        "two-pointers"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "example-2",
+        "check-edge-1",
+        "check-edge-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/dock-pairing.py"
+    },
+    "reservoir-walls": {
+      "pack": "mecode-patterns",
+      "title": "Reservoir Walls",
+      "difficulty": "medium",
+      "patterns": [
+        "two-pointers"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-4",
+        "check-seed-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/reservoir-walls.py"
+    },
+    "ticket-counter": {
+      "pack": "mecode-patterns",
+      "title": "Ticket Counter",
+      "difficulty": "easy",
+      "patterns": [
+        "binary-search"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-1",
+        "check-edge-2",
+        "check-edge-3",
+        "check-seed-1",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/ticket-counter.py"
+    },
+    "parcel-capacity": {
+      "pack": "mecode-patterns",
+      "title": "Parcel Capacity",
+      "difficulty": "medium",
+      "patterns": [
+        "binary-search"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/parcel-capacity.py"
+    },
+    "twin-archive-rank": {
+      "pack": "mecode-patterns",
+      "title": "Twin Archive Rank",
+      "difficulty": "hard",
+      "patterns": [
+        "binary-search"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-2",
+        "check-seed-1",
+        "check-seed-2",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/twin-archive-rank.py"
+    },
+    "canopy-height": {
+      "pack": "mecode-patterns",
+      "title": "Canopy Height",
+      "difficulty": "easy",
+      "patterns": [
+        "trees"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "check-edge-2",
+        "check-edge-4",
+        "check-seed-2",
+        "check-seed-3",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": true,
+      "referenceFile": "catalog-dev/refs/canopy-height.py"
+    },
+    "shared-ancestor": {
+      "pack": "mecode-patterns",
+      "title": "Shared Ancestor",
+      "difficulty": "medium",
+      "patterns": [
+        "trees"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-2",
+        "check-edge-3",
+        "check-seed-2",
+        "check-seed-3",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/shared-ancestor.py"
+    },
+    "richest-trail": {
+      "pack": "mecode-patterns",
+      "title": "Richest Trail",
+      "difficulty": "hard",
+      "patterns": [
+        "trees"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "example-2",
+        "check-edge-2",
+        "check-edge-4",
+        "check-seed-1",
+        "check-seed-2",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/richest-trail.py"
+    },
+    "rope-splicer": {
+      "pack": "mecode-patterns",
+      "title": "Rope Splicer",
+      "difficulty": "easy",
+      "patterns": [
+        "heap"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-2",
+        "check-edge-2",
+        "check-seed-1",
+        "check-seed-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/rope-splicer.py"
+    },
+    "feed-merger": {
+      "pack": "mecode-patterns",
+      "title": "Feed Merger",
+      "difficulty": "medium",
+      "patterns": [
+        "heap"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-2",
+        "check-edge-2",
+        "check-seed-2",
+        "check-seed-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/feed-merger.py"
+    },
+    "drift-median": {
+      "pack": "mecode-patterns",
+      "title": "Drift Median",
+      "difficulty": "hard",
+      "patterns": [
+        "heap"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "example-2",
+        "check-edge-2",
+        "check-edge-3",
+        "check-seed-1",
+        "check-seed-2",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/drift-median.py"
+    },
+    "charm-bracelet": {
+      "pack": "mecode-patterns",
+      "title": "Charm Bracelet",
+      "difficulty": "medium",
+      "patterns": [
+        "backtracking"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-1",
+        "check-edge-3",
+        "check-seed-3",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/charm-bracelet.py"
+    },
+    "sentry-grid": {
+      "pack": "mecode-patterns",
+      "title": "Sentry Grid",
+      "difficulty": "medium",
+      "patterns": [
+        "backtracking"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-2",
+        "check-edge-2",
+        "check-seed-2",
+        "check-seed-3",
+        "check-seed-4"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/sentry-grid.py"
+    },
+    "passcode-roster": {
+      "pack": "mecode-patterns",
+      "title": "Passcode Roster",
+      "difficulty": "medium",
+      "patterns": [
+        "backtracking"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 12,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-2",
+        "check-edge-2",
+        "check-edge-4",
+        "check-edge-5",
+        "check-seed-2",
+        "check-seed-3",
+        "check-seed-4"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/passcode-roster.py"
+    },
+    "reef-clusters": {
+      "pack": "mecode-patterns",
+      "title": "Reef Clusters",
+      "difficulty": "easy",
+      "patterns": [
+        "graphs"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-2",
+        "check-edge-3",
+        "check-seed-3",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/reef-clusters.py"
+    },
+    "bread-mold": {
+      "pack": "mecode-patterns",
+      "title": "Bread Mold",
+      "difficulty": "medium",
+      "patterns": [
+        "graphs"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 12,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-5",
+        "check-seed-1",
+        "check-seed-2",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/bread-mold.py"
+    },
+    "rival-teams": {
+      "pack": "mecode-patterns",
+      "title": "Rival Teams",
+      "difficulty": "medium",
+      "patterns": [
+        "graphs"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "check-edge-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": true,
+      "referenceFile": "catalog-dev/refs/rival-teams.py"
+    },
+    "stepping-hops": {
+      "pack": "mecode-patterns",
+      "title": "Stepping Hops",
+      "difficulty": "easy",
+      "patterns": [
+        "dp-1d"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "example-2",
+        "check-edge-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/stepping-hops.py"
+    },
+    "lantern-festival": {
+      "pack": "mecode-patterns",
+      "title": "Lantern Festival",
+      "difficulty": "medium",
+      "patterns": [
+        "dp-1d"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-3",
+        "check-seed-2",
+        "check-seed-3",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/lantern-festival.py"
+    },
+    "vending-change": {
+      "pack": "mecode-patterns",
+      "title": "Vending Change",
+      "difficulty": "medium",
+      "patterns": [
+        "dp-1d"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-2",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/vending-change.py"
+    },
+    "garden-routes": {
+      "pack": "mecode-patterns",
+      "title": "Garden Routes",
+      "difficulty": "medium",
+      "patterns": [
+        "dp-2d"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "example-2",
+        "check-edge-2",
+        "check-edge-4",
+        "check-edge-5",
+        "check-seed-1",
+        "check-seed-2",
+        "check-seed-3",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/garden-routes.py"
+    },
+    "spell-fixer": {
+      "pack": "mecode-patterns",
+      "title": "Spell Fixer",
+      "difficulty": "medium",
+      "patterns": [
+        "dp-2d"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 9,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "example-2",
+        "check-edge-2",
+        "check-seed-2",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/spell-fixer.py"
+    },
+    "backpack-haul": {
+      "pack": "mecode-patterns",
+      "title": "Backpack Haul",
+      "difficulty": "medium",
+      "patterns": [
+        "dp-2d"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/backpack-haul.py"
+    },
+    "stepping-stones": {
+      "pack": "mecode-patterns",
+      "title": "Stepping Stones",
+      "difficulty": "easy",
+      "patterns": [
+        "greedy"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-2",
+        "check-edge-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/stepping-stones.py"
+    },
+    "charging-loop": {
+      "pack": "mecode-patterns",
+      "title": "Charging Loop",
+      "difficulty": "medium",
+      "patterns": [
+        "greedy"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "example-2",
+        "check-seed-1",
+        "check-seed-2",
+        "check-seed-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/charging-loop.py"
+    },
+    "reward-ladder": {
+      "pack": "mecode-patterns",
+      "title": "Reward Ladder",
+      "difficulty": "hard",
+      "patterns": [
+        "greedy"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "check-edge-2",
+        "check-edge-5",
+        "check-seed-1",
+        "check-seed-2",
+        "check-seed-3",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": true,
+      "referenceFile": "catalog-dev/refs/reward-ladder.py"
+    },
+    "coupled-cars": {
+      "pack": "mecode-patterns",
+      "title": "Coupled Cars",
+      "difficulty": "medium",
+      "patterns": [
+        "linked-lists"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 12,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "check-edge-3",
+        "check-edge-5",
+        "check-seed-2",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": true,
+      "referenceFile": "catalog-dev/refs/coupled-cars.py"
+    },
+    "loop-entry": {
+      "pack": "mecode-patterns",
+      "title": "Loop Entry",
+      "difficulty": "medium",
+      "patterns": [
+        "linked-lists"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 12,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-3",
+        "check-seed-3",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/loop-entry.py"
+    },
+    "prefix-directory": {
+      "pack": "mecode-patterns",
+      "title": "Prefix Directory",
+      "difficulty": "medium",
+      "patterns": [
+        "tries"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-2",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/prefix-directory.py"
+    },
+    "wildcard-lexicon": {
+      "pack": "mecode-patterns",
+      "title": "Wildcard Lexicon",
+      "difficulty": "hard",
+      "patterns": [
+        "tries"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-2",
+        "check-seed-1",
+        "check-seed-2",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/wildcard-lexicon.py"
+    },
+    "course-sequence": {
+      "pack": "mecode-patterns",
+      "title": "Course Sequence",
+      "difficulty": "medium",
+      "patterns": [
+        "advanced-graphs"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "check-edge-2"
+      ],
+      "wrongBaselinePassesAllExamples": true,
+      "referenceFile": "catalog-dev/refs/course-sequence.py"
+    },
+    "cheapest-route": {
+      "pack": "mecode-patterns",
+      "title": "Cheapest Route",
+      "difficulty": "medium",
+      "patterns": [
+        "advanced-graphs"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 12,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-3",
+        "check-edge-5",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/cheapest-route.py"
+    },
+    "booking-merge": {
+      "pack": "mecode-patterns",
+      "title": "Booking Merge",
+      "difficulty": "easy",
+      "patterns": [
+        "intervals"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "example-2",
+        "check-edge-2",
+        "check-edge-5",
+        "check-seed-3",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/booking-merge.py"
+    },
+    "room-juggler": {
+      "pack": "mecode-patterns",
+      "title": "Room Juggler",
+      "difficulty": "medium",
+      "patterns": [
+        "intervals"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-2",
+        "check-seed-2",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/room-juggler.py"
+    },
+    "spiral-walk": {
+      "pack": "mecode-patterns",
+      "title": "Spiral Walk",
+      "difficulty": "medium",
+      "patterns": [
+        "math-geometry"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 12,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-2",
+        "check-edge-3",
+        "check-seed-2",
+        "check-seed-3",
+        "check-seed-4"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/spiral-walk.py"
+    },
+    "lantern-line": {
+      "pack": "mecode-patterns",
+      "title": "Lantern Line",
+      "difficulty": "hard",
+      "patterns": [
+        "math-geometry"
+      ],
+      "examples": 2,
+      "checks": 10,
+      "tests": 12,
+      "referenceExecutedOk": 12,
+      "handAnsweredCases": 7,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "check-edge-3"
+      ],
+      "wrongBaselinePassesAllExamples": true,
+      "referenceFile": "catalog-dev/refs/lantern-line.py"
+    },
+    "lone-signal": {
+      "pack": "mecode-patterns",
+      "title": "Lone Signal",
+      "difficulty": "medium",
+      "patterns": [
+        "bit-manipulation"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 11,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "example-2",
+        "check-edge-2",
+        "check-edge-3",
+        "check-seed-1",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/lone-signal.py"
+    },
+    "clash-keys": {
+      "pack": "mecode-patterns",
+      "title": "Clash Keys",
+      "difficulty": "hard",
+      "patterns": [
+        "bit-manipulation"
+      ],
+      "examples": 2,
+      "checks": 9,
+      "tests": 11,
+      "referenceExecutedOk": 11,
+      "handAnsweredCases": 6,
+      "bruteOracleStored": 10,
+      "bruteOracleExtraSeeded": 150,
+      "wrongBaselineFails": [
+        "example-1",
+        "check-edge-3",
+        "check-edge-4",
+        "check-seed-1",
+        "check-seed-2",
+        "check-seed-3",
+        "check-seed-4",
+        "check-large"
+      ],
+      "wrongBaselinePassesAllExamples": false,
+      "referenceFile": "catalog-dev/refs/clash-keys.py"
+    }
+  }
+}

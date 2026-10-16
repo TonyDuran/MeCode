@@ -5,3 +5,4 @@ test-results/
 package-lock.json
 packs/
 engine/
+catalog-dev/

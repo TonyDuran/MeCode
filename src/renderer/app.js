@@ -77,12 +77,34 @@ async function refreshBackend() {
   syncControls();
 }
 
+/** (Re)build a filter <select> from the live catalog while keeping the user's current choice if it still exists. */
+function fillFilter(id, allLabel, values) {
+  const sel = $(id);
+  const keep = sel.value;
+  const opts = [['', allLabel], ...values.map((v) => [v, v])].map(([value, label]) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    return o;
+  });
+  sel.replaceChildren(...opts);
+  sel.value = values.includes(keep) ? keep : '';
+}
+
 function renderList() {
   const q = $('search').value.toLowerCase();
+  const pat = $('patternFilter').value;
+  const diff = $('diffFilter').value;
+  const stat = $('statusFilter').value;
   const ul = $('list');
   ul.replaceChildren();
+  let shown = 0;
   for (const p of S.catalog.problems) {
     if (q && !(p.title.toLowerCase().includes(q) || p.patterns.join(' ').includes(q))) continue;
+    if (pat && !p.patterns.includes(pat)) continue;
+    if (diff && p.difficulty !== diff) continue;
+    if (stat && p.status !== stat) continue;
+    shown += 1;
     const li = document.createElement('li');
     li.textContent = `[${p.status}] ${p.title} · ${p.difficulty} · ${p.patterns.join(', ')}`;
     li.dataset.key = p.key;
@@ -90,6 +112,9 @@ function renderList() {
     li.addEventListener('click', () => openProblem(p.key));
     ul.append(li);
   }
+  const all = S.catalog.problems;
+  const solved = all.filter((p) => p.status === 'solved').length;
+  $('catalogSummary').textContent = `Showing ${shown} of ${all.length} problems · ${new Set(all.flatMap((p) => p.patterns)).size} patterns · ${solved} solved`;
 }
 
 async function loadCatalog() {
@@ -104,6 +129,8 @@ async function loadCatalog() {
   if (r.value.warning) msgs.push(r.value.warning);
   banner(msgs.join('\n'));
   $('packsDir').textContent = `managed packs folder: ${r.value.packsDir}`;
+  fillFilter('patternFilter', 'All patterns', [...new Set(r.value.problems.flatMap((p) => p.patterns))].sort());
+  fillFilter('statusFilter', 'Any status', [...new Set(r.value.problems.map((p) => p.status))].sort());
   renderList();
 }
 
@@ -362,6 +389,10 @@ $('retry').addEventListener('click', async () => {
 $('search').addEventListener('input', () => {
   if (S.catalog) renderList();
 });
+for (const id of ['patternFilter', 'diffFilter', 'statusFilter'])
+  $(id).addEventListener('change', () => {
+    if (S.catalog) renderList();
+  });
 $('lang').addEventListener('change', async () => {
   if (S.trans || !S.prob) {
     $('lang').value = S.lang;

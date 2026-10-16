@@ -13,7 +13,7 @@ Python/Node/g++/gcc inside the engine image - the guest Node is not the build No
 | Gate                  | Command                                                                                            |
 | --------------------- | -------------------------------------------------------------------------------------------------- |
 | format / lint / types | `npm run format:check`, `npm run lint`, `npm run typecheck`                                        |
-| unit (92)             | `npm test`                                                                                         |
+| unit (96)             | `npm test`                                                                                         |
 | real Docker (6)       | `MECODE_REAL_DOCKER=1 npm run test:integration` (needs `docker build -t mecode-engine:v2 engine/`) |
 | real-browser GUI E2E  | `npm run test:e2e` (needs an installed Chrome; or set `MECODE_E2E_CHROME=/path/to/chrome`)         |
 | negative canaries     | `npm run test:canary`                                                                              |

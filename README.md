@@ -2,7 +2,7 @@
 
 A local, offline-after-setup coding-practice app. Browse problems, read statements/examples/constraints, pick a language, edit code, run the examples or your own input, submit against the full hidden test set, and keep your drafts and progress on your own machine. Your code runs inside an app-owned, locked-down container, never directly on your host.
 
-Status: vertical slice (3 bundled problems, Python / JavaScript / C++17 / C17). Not a finished platform: the large pattern catalog and offline image provisioning are still to come (see "Status" below).
+Status: 48 bundled original problems across 18 patterns (docs/CATALOG.md), Python / JavaScript / C++17 / C17. Not a finished platform: offline image provisioning and the accepted-source snapshot are still separate tasks (see "Status" below).
 
 ## How it works
 
@@ -50,6 +50,6 @@ Without `MECODE_REAL_DOCKER=1` the integration tests are reported as skipped, no
 
 ## Status / limits
 
-- Catalog is the first slice (3 problems); the Blind/NeetCode-scale catalog is a separate task. CI and platform web archives: see `docs/CI-AND-DELIVERY.md`.
+- Catalog: 48 original problems over 18 patterns (`docs/CATALOG.md`), all CC0-1.0. CI and platform web archives: see `docs/CI-AND-DELIVERY.md`.
 - Runner and submission share a container user (local practice, not an anti-cheat or multi-tenant service).
 - Windows/macOS: archives exist (`npm run package:platforms`) and CI checks structure and launcher start-up, but the Docker/engine path is untested there.

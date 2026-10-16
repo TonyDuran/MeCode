@@ -26,15 +26,29 @@ class Catalog {
 
   async _seed() {
     if (!this.seedDir) return;
+    // The marker records which bundled pack files were already seeded, so a later app version can add NEW bundled packs
+    // exactly once without overwriting, resurrecting or resetting anything the user edited or deleted.
+    // (Legacy marker text 'seeded' means only core.json was seeded.)
     const marker = path.join(path.dirname(this.packsDir), '.packs-seeded');
-    if (await leafStat(marker)) return;
+    let done = [];
+    if (await leafStat(marker)) {
+      try {
+        const txt = (await safeRead(marker)).trim();
+        done = txt === 'seeded' ? ['core.json'] : JSON.parse(txt).seeded;
+        if (!Array.isArray(done) || !done.every((x) => typeof x === 'string')) done = ['core.json'];
+      } catch {
+        done = ['core.json'];
+      }
+    }
     await ensureDir(this.packsDir);
-    for (const f of await fs.promises.readdir(this.seedDir)) {
-      if (!f.endsWith('.json')) continue;
+    const added = [];
+    for (const f of (await fs.promises.readdir(this.seedDir)).sort()) {
+      if (!f.endsWith('.json') || done.includes(f)) continue;
       const dst = path.join(this.packsDir, f);
       if (!(await leafStat(dst))) await atomicWrite(dst, await fs.promises.readFile(path.join(this.seedDir, f), 'utf8'));
+      added.push(f);
     }
-    await atomicWrite(marker, 'seeded\n');
+    if (added.length || done.length === 0) await atomicWrite(marker, `${JSON.stringify({ seeded: [...done, ...added].sort() })}\n`);
   }
 
   /** Parse+validate a set of {name,text}. Returns {ok,packs}|{ok:false,errors}. */

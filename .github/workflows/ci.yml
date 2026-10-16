@@ -40,11 +40,23 @@ jobs:
         run: npm run lint
       - name: Type check (tsc --noEmit, checkJs over src/ and scripts/)
         run: npm run typecheck
-      - name: Unit tests (fake-engine and local-web socket tests; expect 92 pass, 0 skipped)
+      - name: Unit tests (fake-engine and local-web socket tests; expect 96 pass, 0 skipped)
         run: |
           npm test 2>&1 | tee unit.log
           grep -E '^ℹ (tests|pass|fail|skipped)' unit.log
-          grep -q '^ℹ tests 92$' unit.log && grep -q '^ℹ pass 92$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
+          grep -q '^ℹ tests 96$' unit.log && grep -q '^ℹ pass 96$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
+      - name: Catalog gate (48 problems / 18 patterns / provenance; every reference executed on every stored case; brute oracles; wrong baselines must fail; generated artifacts current)
+        run: |
+          set -o pipefail
+          python3 --version
+          python3 catalog-dev/catalog.py check 2>&1 | tee catalog.log
+          tail -1 catalog.log | grep -qx 'OK'
+          grep -q '"total": 48' catalog.log && grep -q '"patterns": 18' catalog.log && grep -q '"wrongBaselinesDiscriminating": 48' catalog.log
+      - name: Catalog negative controls (each deliberate corruption must turn the gate RED; untouched copy GREEN)
+        run: |
+          set -o pipefail
+          python3 catalog-dev/negative-controls.py 2>&1 | tee catalog-negative.log
+          grep -q 'negative controls: ALL BEHAVED' catalog-negative.log
 
   engine-gui:
     name: real Docker + real browser (integration, GUI E2E, canaries, fresh package)
@@ -75,6 +87,14 @@ jobs:
           mkdir -p test-results
           MECODE_REAL_DOCKER=1 npm run test:integration 2>&1 | tee test-results/integration.log
           grep -q '^ℹ tests 6$' test-results/integration.log && grep -q '^ℹ pass 6$' test-results/integration.log && grep -q '^ℹ skipped 0$' test-results/integration.log
+      - name: Catalog real-container acceptance (48 references ACCEPTED, 48 wrong baselines rejected, C/C++/JS regression solutions, 4-language starters)
+        run: |
+          set -o pipefail
+          MECODE_CATALOG_DOCKER_LOG="$PWD/test-results/catalog-docker.json" node scripts/catalog-docker-accept.cjs 2>&1 | tee test-results/catalog-docker.log
+          grep -q '"unexpected":0' test-results/catalog-docker.log
+          grep -q '"reference":{"n":48,"asExpected":48}' test-results/catalog-docker.log
+          grep -q '"wrong":{"n":48,"asExpected":48}' test-results/catalog-docker.log
+          grep -q '"taskOwnedContainersLeft":0' test-results/catalog-docker.log
       - name: GUI E2E in real Chrome against the real server + real engine (sandbox enabled)
         run: |
           set -o pipefail

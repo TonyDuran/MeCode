@@ -40,6 +40,21 @@ nav {
   overflow: auto;
   padding: 0.4rem;
 }
+nav .filters {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+nav .filters select {
+  flex: 1 1 30%;
+  min-width: 0;
+}
+#catalogSummary {
+  font-size: 12px;
+  margin: 2px 0 6px;
+  opacity: 0.85;
+}
 nav input {
   width: 100%;
   box-sizing: border-box;

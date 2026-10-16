@@ -154,7 +154,7 @@ test('catalog: import/replace/rollback/reload keeps last-good; stale hash change
   const cat = new Catalog(path.join(d, 'packs'), path.join(d, 'last-good.json'), { seedDir: path.join(__dirname, '../../packs') });
   const r0 = await cat.init();
   assert.equal(r0.ok, true);
-  assert.equal(cat.problemCount(), 3);
+  assert.equal(cat.problemCount(), 48, 'bundled catalog: 3 core + 45 pattern problems');
   const h0 = cat.list().problems[0].contentHash;
   // external pack, then duplicate w/o replace
   const ext = core();
@@ -162,7 +162,7 @@ test('catalog: import/replace/rollback/reload keeps last-good; stale hash change
   ext.title = 'Ext';
   ext.problems = [ext.problems[0]];
   assert.equal((await cat.import(JSON.stringify(ext))).ok, true);
-  assert.equal(cat.problemCount(), 4);
+  assert.equal(cat.problemCount(), 49);
   const dup = await cat.import(JSON.stringify(ext));
   assert.equal(dup.ok, false);
   assert.equal(dup.error.code, 'CONFLICT');
@@ -196,7 +196,7 @@ test('catalog: import/replace/rollback/reload keeps last-good; stale hash change
   // public view hides check expected answers
   const pub = cat.getPublic('external/beacon-pairs');
   assert.equal(pub.tests, undefined);
-  assert.equal(pub.checkCount, 3);
+  assert.equal(pub.checkCount, core().problems[0].tests.filter((t) => t.kind === 'check').length);
   assert.ok(!JSON.stringify(pub).includes('check-all-equal'));
 });
 
