@@ -51,6 +51,70 @@ def fmt(*lines):
     return "\n".join(str(x) for x in lines) + "\n"
 
 
+# ---- authoring-time domain validators (trusted DEV code; never shipped in a pack, never run by the app) ----
+# Each returns a list of error strings for a stdin that violates the problem's published constraints/preconditions.
+def charging_starts(inp):
+    """All valid start stops of a charging-loop input, from signed prefix balances (exact, O(n))."""
+    d = ints(inp)
+    n, gain, cost = d[0], d[1 : 1 + d[0]], d[1 + d[0] : 1 + 2 * d[0]]
+    pre, t = [0], 0  # pre[j] = balance after the first j legs
+    for g, c in zip(gain, cost):
+        t += g - c
+        pre.append(t)
+    if t < 0:
+        return []
+    # start s is valid iff every balance seen from s stays >= 0; wrapping past stop n-1 adds the total t (>= 0)
+    suf = [float("inf")] * (n + 2)  # suf[j] = min(pre[j:]) ; head[j] = min(pre[1..j])
+    for j in range(n, -1, -1):
+        suf[j] = min(pre[j], suf[j + 1])
+    head, h = [float("inf")], float("inf")
+    for j in range(1, n + 1):
+        h = min(h, pre[j])
+        head.append(h)
+    return [s for s in range(n) if suf[s + 1] >= pre[s] and (s == 0 or t + head[s] >= pre[s])]
+
+
+def dom_charging(inp):
+    d = ints(inp)
+    n = d[0] if d else 0
+    if not 1 <= n <= 20000 or len(d) != 1 + 2 * n:
+        return [f"charging-loop shape: n={n}, {len(d)} integers"]
+    if not all(0 <= x <= 1000000 for x in d[1:]):
+        return ["charging-loop gain/cost outside 0..1000000"]
+    st = charging_starts(inp)
+    return [f"charging-loop start is not unique: valid starts {st}"] if len(st) > 1 else []
+
+
+def dom_cars(inp):
+    d = ints(inp)
+    n, k = d[0], d[1]
+    errs = []
+    if not 1 <= n <= 20000 or len(d) != 2 + n:
+        errs.append(f"coupled-cars shape: n={n}, {len(d)} integers")
+    if not 1 <= k <= n + 1:
+        errs.append(f"coupled-cars k={k} violates 1 <= k <= n+1 (n={n})")
+    if not all(-(10**9) <= x <= 10**9 for x in d[2:]):
+        errs.append("coupled-cars cargo outside +-1e9")
+    return errs
+
+
+def dom_route(inp):
+    d = ints(inp)
+    n, m = d[0], d[1]
+    if not 1 <= n <= 2000 or not 0 <= m <= 6000 or len(d) != 2 + 3 * m:
+        return [f"cheapest-route shape: n={n}, m={m}, {len(d)} integers"]
+    errs = []
+    for i in range(m):
+        u, v, w = d[2 + 3 * i : 5 + 3 * i]
+        if not (1 <= u <= n and 1 <= v <= n):
+            errs.append(f"cheapest-route road {i + 1} endpoint outside 1..n: {u} {v}")
+        if u == v:
+            errs.append(f"cheapest-route road {i + 1} is a self-loop (u == v == {u}) violating u != v")
+        if not 1 <= w <= 10**9:
+            errs.append(f"cheapest-route road {i + 1} toll {w} outside 1..1e9")
+    return errs[:3]
+
+
 def rng_for(pid, tag):
     # str seeds are hashed with SHA-512 by random.Random, so this is stable across runs and platforms.
     return random.Random(f"mecode-catalog:{pid}:{tag}")

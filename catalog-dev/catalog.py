@@ -178,10 +178,24 @@ def verify(regs, core, new):
         statements.add(q["statement"])
         if q["difficulty"] not in ("easy", "medium", "hard") or not q["constraints"] or q["comparison"] != "tokens":
             e("bad difficulty/constraints/comparison")
+        # 0. authoring-time DOMAIN validation of every stored input and the extra seeded differential inputs; a domain
+        #    violation is reported by name and the case is excluded from answer comparison (oracle agreement on an
+        #    out-of-domain input proves nothing).
+        dom_bad = set()
+        if p.get("dom"):
+            for t in tests:
+                for m in p["dom"](t["stdin"]):
+                    e(f"DOMAIN violation in stored case {t['id']}: {m}")
+                    dom_bad.add(t["id"])
+            for i in range(lib.EXTRA_DIFFERENTIAL):
+                for m in p["dom"](p["gen"](lib.rng_for(pid, f"diff{i}"), 1 + i % 6)):
+                    e(f"DOMAIN violation in extra seeded case {i}: {m}")
         # 1. the standalone generated reference program, really executed on every stored case
         refpath = os.path.join(HERE, "refs", f"{pid}.py")
         ref_ok = 0
         for t in tests:
+            if t["id"] in dom_bad:
+                continue
             rc, out, err = run_ref(refpath, t["stdin"])
             if rc != 0 or tokens(out) != tokens(t["expected"]):
                 e(f"reference {'crashed' if rc else 'disagrees'} on {t['id']}: rc={rc} got={out[:60]!r} want={t['expected'][:60]!r} {err[-200:]}")
@@ -191,6 +205,8 @@ def verify(regs, core, new):
         brute_stored, brute_extra = 0, 0
         if p.get("brute"):
             for t in tests:
+                if t["id"] in dom_bad:
+                    continue
                 b = p["brute"](t["stdin"])
                 if b is None:
                     continue

@@ -874,6 +874,7 @@
         "check-seed-1",
         "check-seed-2",
         "check-seed-3",
+        "check-seed-4",
         "check-large"
       ],
       "wrongBaselinePassesAllExamples": false,

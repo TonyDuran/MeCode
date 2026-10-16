@@ -2,7 +2,7 @@
 import sys, heapq, bisect, math, itertools, functools  # noqa: F401,E401
 from collections import *  # noqa: F401,F403
 from itertools import permutations
-from lib import add, ints, row, fmt  # noqa: F401
+from lib import add, ints, row, fmt, dom_cars, dom_route  # noqa: F401
 
 
 # ---------------------------------------------------------------- linked-lists
@@ -78,12 +78,13 @@ add(
     brute=b_cars,
     wrong=w_cars,
     gen=g_cars,
+    dom=dom_cars,
     big=lambda rng: fmt("9000 7", row([rng.randint(0, 9999) for _ in range(9000)])),
     ex=[
         ("6 3\n1 2 3 4 5 6\n", "3 2 1 6 5 4", "Two full blocks of three are each reversed."),
         ("7 2\n10 20 30 40 50 60 70\n", "20 10 40 30 60 50 70", "The leftover single car 70 stays put."),
     ],
-    known=[("1 1\n5\n", "5"), ("5 2\n1 2 3 4 5\n", "2 1 4 3 5"), ("5 3\n1 2 3 4 5\n", "3 2 1 4 5"), ("4 4\n1 2 3 4\n", "4 3 2 1"), ("3 5\n1 2 3\n", "1 2 3")],
+    known=[("1 1\n5\n", "5"), ("5 2\n1 2 3 4 5\n", "2 1 4 3 5"), ("5 3\n1 2 3 4 5\n", "3 2 1 4 5"), ("4 4\n1 2 3 4\n", "4 3 2 1"), ("3 4\n1 2 3\n", "1 2 3")],
 )
 
 
@@ -448,6 +449,14 @@ def g_route(rng, i):
     return fmt(f"{n} {len(es)}", *es)
 
 
+def big_road(rng):
+    u = rng.randint(1, 1499)
+    v = rng.randint(2, 1500)
+    while v == u:  # constraint u != v: redraw equal endpoints
+        v = rng.randint(2, 1500)
+    return f"{u} {v} {rng.randint(1, 1000)}"
+
+
 add(
     id="cheapest-route",
     title="Cheapest Route",
@@ -461,7 +470,8 @@ add(
     brute=b_route,
     wrong=w_route,
     gen=g_route,
-    big=lambda rng: fmt("1500 4000", *[f"{rng.randint(1, 1499)} {rng.randint(2, 1500)} {rng.randint(1, 1000)}" for _ in range(3999)], "1 1500 5000"),
+    dom=dom_route,
+    big=lambda rng: fmt("1500 4000", *[big_road(rng) for _ in range(3999)], "1 1500 5000"),
     ex=[
         ("5 6\n1 2 4\n1 3 1\n3 2 2\n2 4 1\n3 4 6\n4 5 3\n", "7", "1 -> 3 -> 2 -> 4 -> 5 costs 1+2+1+3 = 7."),
         ("4 2\n1 2 5\n3 4 1\n", "-1", "Depot 4 is only reachable from depot 3."),

@@ -62,7 +62,7 @@ Wrong baselines failing at least one check: 48/48
 | spell-fixer | mecode-patterns | medium | 2 | 10 | 9/150 | 5 |
 | backpack-haul | mecode-patterns | medium | 2 | 9 | 10/150 | 3 |
 | stepping-stones | mecode-patterns | easy | 2 | 9 | 11/150 | 4 |
-| charging-loop | mecode-patterns | medium | 2 | 9 | 11/150 | 6 |
+| charging-loop | mecode-patterns | medium | 2 | 9 | 11/150 | 7 |
 | reward-ladder | mecode-patterns | hard | 2 | 10 | 11/150 | 7 |
 | coupled-cars | mecode-patterns | medium | 2 | 10 | 12/150 | 4 |
 | loop-entry | mecode-patterns | medium | 2 | 10 | 12/150 | 5 |

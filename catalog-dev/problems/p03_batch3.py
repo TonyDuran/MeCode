@@ -2,7 +2,7 @@
 import sys, heapq, bisect, math, itertools, functools  # noqa: F401,E401
 from collections import *  # noqa: F401,F403
 from itertools import product
-from lib import add, ints, row, fmt  # noqa: F401
+from lib import add, ints, row, fmt, charging_starts, dom_charging  # noqa: F401
 
 MOD = 1_000_000_007
 
@@ -727,8 +727,13 @@ def w_charge(inp):  # first station whose own charge covers its own leg
 
 
 def g_charge(rng, i):
-    n = rng.randint(1, 6)
-    return fmt(n, row([rng.randint(0, 6) for _ in range(n)]), row([rng.randint(0, 6) for _ in range(n)]))
+    # The published contract says a valid start is unique, so redraw (bounded) any input with two or more valid starts.
+    for _ in range(500):
+        n = rng.randint(1, 6)
+        s = fmt(n, row([rng.randint(0, 6) for _ in range(n)]), row([rng.randint(0, 6) for _ in range(n)]))
+        if len(charging_starts(s)) <= 1:
+            return s
+    raise RuntimeError("charging-loop generator could not draw a unique-start input")
 
 
 add(
@@ -744,6 +749,7 @@ add(
     brute=b_charge,
     wrong=w_charge,
     gen=g_charge,
+    dom=dom_charging,
     big=lambda rng: fmt(9000, row([rng.randint(0, 9) for _ in range(8999)] + [9]), row([8] * 9000)),
     ex=[
         ("3\n2 3 4\n3 4 3\n", "-1", "Total charge 9 is less than total cost 10."),
