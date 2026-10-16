@@ -24,6 +24,7 @@ const tracked = git('ls-files', '-z').split('\0').filter(Boolean);
 const include = (f) =>
   f !== 'tests/unit/t13-archive-verify.test.cjs' &&
   f !== 'tests/unit/t18-catalog-gate.test.cjs' &&
+  f !== 'tests/integration/catalog-cleanup.test.cjs' && // dev-only: needs the full source checkout (scripts/catalog-docker-accept.cjs), never shipped
   (['README.md', 'package.json', 'scripts/make-demo-pack.cjs'].includes(f) || /^(src|engine|packs|docs)\//.test(f) || /^tests\/(unit|integration)\//.test(f)); // build-tool tests need scripts/lib, which is not shipped
 const common = tracked.filter(include).sort();
 

@@ -29,16 +29,18 @@ const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms)
 const owned = (/** @type {string} */ install) =>
   cp.execFileSync('docker', ['ps', '-aq', '--filter', 'label=mecode.app=mecode-v2', '--filter', `label=mecode.install=${install}`], { encoding: 'utf8', timeout: 10000 }).trim();
 
-async function main() {
+/** Every acquired resource is registered here so main() can release it on EVERY exit path (success, gate failure, throw). */
+/** @type {{ dir: string | null, installId: string | null, backend: any, stopped: boolean }} */
+const res = { dir: null, installId: null, backend: null, stopped: false };
+
+async function run() {
   const d = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'catdock-'));
+  res.dir = d;
   const store = new Store(d);
   await store.init();
+  res.installId = store.installId;
   const catalog = new Catalog(path.join(d, 'packs'), path.join(d, 'lg.json'), { seedDir: path.join(root, 'packs') });
   await catalog.init();
-  const backend = new Backend({ installId: store.installId });
-  const st = await backend.start();
-  if (st.state !== 'ready') throw new Error(`engine not ready: ${/** @type {any} */ (st).reason}`);
-  const exec = new Executor({ catalog, store, backend });
   const problems = catalog.list().problems.filter((p) => !only.length || only.includes(p.key.split('/')[1]));
   /** @type {any[]} */
   const results = [];
@@ -47,6 +49,14 @@ async function main() {
   const solFiles = fs.existsSync(solDir) ? fs.readdirSync(solDir).sort() : [];
   // In a full run, a missing/unknown required solution file or a wrong problem count fails here, before any container work.
   const plan = FULL ? gate.planFull({ problemIds: problems.map((p) => p.key.split('/')[1]), solutionFiles: solFiles }) : null;
+  // Only now (plan + required files validated) is the container backend started.
+  const backend = new Backend({ installId: store.installId });
+  res.backend = backend;
+  const st = await backend.start();
+  if (st.state !== 'ready') throw new Error(`engine not ready: ${/** @type {any} */ (st).reason}`);
+  // Test-only fault injection (tests/integration/catalog-cleanup.test.cjs): fail AFTER the backend/temp resources exist, to exercise cleanup.
+  if (process.env.MECODE_CATALOG_DOCKER_FAULT === 'after-start') throw new Error('injected fault after backend start (MECODE_CATALOG_DOCKER_FAULT)');
+  const exec = new Executor({ catalog, store, backend });
 
   async function submit(/** @type {string} */ key, /** @type {string} */ language, /** @type {string} */ source) {
     for (let i = 0; i < 300 && backend.getStatus().state !== 'ready'; i++) await sleep(200);
@@ -101,6 +111,7 @@ async function main() {
     }
   }
   const stopped = await backend.stop();
+  res.stopped = true;
   const left = owned(store.installId);
   /** @type {any} */
   const ev = gate.evaluate({ results, plan });
@@ -121,12 +132,55 @@ async function main() {
   }
   if (process.env.MECODE_CATALOG_DOCKER_LOG) fs.writeFileSync(process.env.MECODE_CATALOG_DOCKER_LOG, `${JSON.stringify({ summary, results }, null, 2)}\n`);
   console.log(`SUMMARY ${JSON.stringify(summary)}`);
-  fs.rmSync(d, { recursive: true, force: true });
   if (!FULL) console.log('PARTIAL RUN (--only/--skip-wrong): NOT full catalog acceptance; fullAcceptance is false by definition');
   const clean = unexpected === 0 && ev.errors.length === 0 && stopped.confirmed && left === '';
-  process.exit(clean && (FULL ? ev.fullAcceptance : true) ? 0 : 1);
+  return clean && (FULL ? ev.fullAcceptance : true) ? 0 : 1;
 }
-main().catch((e) => {
-  console.error(e);
-  process.exit(2);
-});
+
+async function main() {
+  /** @type {any} */
+  let failure = null;
+  let code = 0;
+  try {
+    code = await run();
+  } catch (e) {
+    failure = e;
+    code = 2;
+  } finally {
+    /** @type {string[]} */
+    const cleanupErrors = [];
+    let ownedLeft = 0;
+    if (res.backend && !res.stopped) {
+      try {
+        const s = await res.backend.stop();
+        if (!s || !s.confirmed) cleanupErrors.push(`backend stop not confirmed: ${JSON.stringify(s)}`);
+      } catch (e) {
+        cleanupErrors.push(`backend stop threw: ${/** @type {any} */ (e).message}`);
+      }
+    }
+    if (res.installId && res.backend) {
+      try {
+        const left = owned(res.installId); // exact install label only; never a broad prune
+        ownedLeft = left === '' ? 0 : left.split('\n').length;
+        if (ownedLeft) cleanupErrors.push(`${ownedLeft} install-owned container(s) remain for install ${res.installId}`);
+      } catch (e) {
+        cleanupErrors.push(`owned-container check failed: ${/** @type {any} */ (e).message}`);
+      }
+    }
+    if (res.dir) {
+      try {
+        fs.rmSync(res.dir, { recursive: true, force: true });
+        if (fs.existsSync(res.dir)) cleanupErrors.push(`temp dir still present: ${res.dir}`);
+      } catch (e) {
+        cleanupErrors.push(`temp dir removal failed: ${/** @type {any} */ (e).message}`);
+      }
+    }
+    if (failure) console.error(failure); // the ORIGINAL error is always reported first and keeps exit 2
+    if (failure || cleanupErrors.length) {
+      console.error(`CLEANUP ${JSON.stringify({ installId: res.installId, backendStarted: Boolean(res.backend), ownedLeft, tempDir: res.dir, cleanupErrors })}`);
+    }
+    if (cleanupErrors.length && code === 0) code = 2;
+    process.exitCode = code;
+  }
+}
+main();
