@@ -98,9 +98,9 @@ CONTROLS = [
         "road 1 is a self-loop (u == v == 1) violating u != v",
     ),
     (
-        "cheapest-route: large generator stops redrawing equal endpoints",
+        "cheapest-route: large generator stops rejecting equal endpoints",
         "catalog-dev/problems/p04_batch4.py",
-        lambda s: s.replace("while v == u:  # constraint u != v: redraw equal endpoints", "while False:"),
+        lambda s: s.replace("        if v != u:\n            return f\"{u} {v}", "        if True:\n            return f\"{u} {v}"),
         "DOMAIN violation in stored case check-large: cheapest-route road",
     ),
 ]

@@ -451,10 +451,11 @@ def g_route(rng, i):
 
 def big_road(rng):
     u = rng.randint(1, 1499)
-    v = rng.randint(2, 1500)
-    while v == u:  # constraint u != v: redraw equal endpoints
+    for _ in range(500):  # constraint u != v: bounded redraw of equal endpoints
         v = rng.randint(2, 1500)
-    return f"{u} {v} {rng.randint(1, 1000)}"
+        if v != u:
+            return f"{u} {v} {rng.randint(1, 1000)}"
+    raise RuntimeError("cheapest-route generator could not draw a road with u != v")
 
 
 add(
