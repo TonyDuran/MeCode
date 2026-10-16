@@ -208,16 +208,40 @@ function jsonMember(fd, off, sz, what) {
   }
 }
 /**
+ * Fail-closed platform check BEFORE `docker load`: the manifest.json entry's `Config` must name exactly one regular archive file (the image config, <= 1 MiB JSON object)
+ * whose `os`/`architecture` (and optional `variant`, absent == '') are well-formed strings equal to the bundle manifest's image platform. No normalization.
+ */
+function checkConfigPlatform(fd, regular, configName, image) {
+  if (typeof configName !== 'string' || !configName) fail('archive manifest.json entry has no Config; refusing (image platform cannot be checked before load)');
+  const hit = regular.get(normTarName(configName)) || [];
+  if (hit.length !== 1) fail(`archive image config is ${hit.length ? 'duplicated' : 'missing or not a regular file'}; refusing (platform cannot be checked before load)`);
+  const cfg = jsonMember(fd, ...hit[0], 'image config');
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) fail('archive image config is malformed');
+  const variant = cfg.variant === undefined ? '' : cfg.variant;
+  if (
+    typeof cfg.os !== 'string' ||
+    typeof cfg.architecture !== 'string' ||
+    typeof variant !== 'string' ||
+    !/^[a-z0-9]+$/.test(cfg.os) ||
+    !/^[a-z0-9_]+$/.test(cfg.architecture) ||
+    !/^[a-z0-9]*$/.test(variant)
+  )
+    fail('archive image config has missing or malformed os/architecture/variant; refusing');
+  if (cfg.os !== image.os || cfg.architecture !== image.architecture || variant !== image.variant)
+    fail(`archive image platform ${cfg.os}/${cfg.architecture}/${variant || '-'} does not match the manifest ${image.os}/${image.architecture}/${image.variant || '-'}; nothing loaded`);
+}
+/**
  * Fail-closed tag check of a `docker save` tar BEFORE `docker load`. Supported layout only: ustar entries (regular files/directories), exactly one
  * manifest.json whose every entry has a nonempty RepoTags consisting solely of the alias; an optional index.json / repositories may not name any other tag.
  * Anything missing, duplicated, malformed, truncated or unsupported => fail (nothing is loaded). Not a general archive reader; integrity != publisher authentication.
  */
-function archiveRepoTags(file, alias) {
+function archiveRepoTags(file, alias, image) {
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
     const size = fs.fstatSync(fd).size;
     const hdr = Buffer.alloc(512);
     const found = { 'manifest.json': [], 'index.json': [], repositories: [] };
+    const regular = new Map(); // normalized name -> [[offset, size], ...] of every regular file (image config lookup)
     let off = 0;
     let ended = false;
     for (let n = 0; n < 200000 && off + 512 <= size; n++) {
@@ -234,7 +258,10 @@ function archiveRepoTags(file, alias) {
       if (!name || !Number.isSafeInteger(sz) || sz < 0) fail('engine archive has a malformed tar header');
       if (type !== '0' && type !== '5') fail(`engine archive uses an unsupported tar entry type for ${name.slice(0, 60)}`);
       if (off + 512 + sz > size) fail('engine archive is truncated');
-      if (type === '0' && name in found) found[name].push([off + 512, sz]);
+      if (type === '0') {
+        if (name in found) found[name].push([off + 512, sz]);
+        regular.set(name, [...(regular.get(name) || []), [off + 512, sz]]);
+      }
       off += 512 + Math.ceil(sz / 512) * 512;
     }
     if (!ended) fail('engine archive has no end-of-archive marker (truncated or unsupported)');
@@ -247,6 +274,7 @@ function archiveRepoTags(file, alias) {
       if (!e || typeof e !== 'object' || !Array.isArray(e.RepoTags) || e.RepoTags.length === 0 || e.RepoTags.some((t) => typeof t !== 'string' || !t))
         fail('archive manifest.json has an entry without a nonempty RepoTags list; refusing (tag metadata missing)');
       tags.push(...e.RepoTags);
+      if (image) checkConfigPlatform(fd, regular, e.Config, image);
     }
     if (found.repositories.length) {
       const rep = jsonMember(fd, ...found.repositories[0], 'repositories');
@@ -309,7 +337,7 @@ function cmdImport(argv) {
     }
     fail(`alias ${m.image.alias} already exists and points to a DIFFERENT image (${existing.id}); refusing to replace it`);
   }
-  archiveRepoTags(archive, m.image.alias); // throws (fail closed) unless the tag metadata is fully inspected and alias-only
+  archiveRepoTags(archive, m.image.alias, m.image); // throws (fail closed) unless tag AND image-config platform metadata are fully inspected: alias-only, platform == manifest
   const l = docker(['load', '--input', archive], SAVE_TIMEOUT_MS);
   if (l.code !== 0) fail(`docker load failed: ${l.stderr}`);
   const a = inspect(m.image.alias);

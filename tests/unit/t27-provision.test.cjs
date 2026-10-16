@@ -52,10 +52,12 @@ function tarOf(entries, { end = true, mutate } = {}) {
   return mutate ? mutate(t) : t;
 }
 const man = (tags) => JSON.stringify([{ Config: 'blobs/c', RepoTags: tags, Layers: [] }]);
+const CFG = JSON.stringify({ architecture: 'amd64', os: 'linux', config: {}, rootfs: { type: 'layers', diff_ids: [] } }); // image config as docker save writes it (no variant for amd64)
 const goodTar = (alias = 'mecode-engine:t-x') =>
   tarOf([
     { name: 'blobs/', type: '5' },
     { name: 'manifest.json', body: man([alias]) },
+    { name: 'blobs/c', body: CFG },
   ]);
 
 function rig(state = {}) {
@@ -195,7 +197,7 @@ test('import: loaded alias that does not match the manifest id fails nonzero', (
 });
 
 test('T28 import FAILS CLOSED before docker load on absent/duplicate/unsupported/ambiguous/malformed tag metadata (ZERO load calls)', () => {
-  const good = (extra = []) => tarOf([{ name: 'manifest.json', body: man(['mecode-engine:t-x']) }, ...extra]);
+  const good = (extra = []) => tarOf([{ name: 'manifest.json', body: man(['mecode-engine:t-x']) }, { name: 'blobs/c', body: CFG }, ...extra]);
   const cases = {
     'arbitrary non-tar bytes': Buffer.from('some-archive-bytes'),
     'empty archive (end marker only)': tarOf([]),
@@ -254,9 +256,13 @@ test('T28 recorded platform VARIANT is validated on already-present AND post-loa
   const a2 = rig({ images: { 'mecode-engine:t-x': `${ID}|linux|amd64|v8` } });
   assert.equal(a2.run('import', '--manifest', bundle(a2, { image: v })).status, 0);
   assert.equal(loads(a2).length, 0);
-  // post-load: loaded image has a different variant than recorded => nonzero
+  // post-load (archive config agrees with the manifest, so the pre-load check passes): loaded image has a different variant than recorded => nonzero
+  const tar8 = tarOf([
+    { name: 'manifest.json', body: man(['mecode-engine:t-x']) },
+    { name: 'blobs/c', body: JSON.stringify({ architecture: 'amd64', os: 'linux', variant: 'v8' }) },
+  ]);
   const b = rig({ loadVariant: '' });
-  const y = b.run('import', '--manifest', bundle(b, { image: v }));
+  const y = b.run('import', '--manifest', bundle(b, { image: v, tar: tar8 }));
   assert.notEqual(y.status, 0);
   assert.equal(loads(b).length, 1);
   // post-load: recorded empty variant but loaded image has one => nonzero
@@ -264,5 +270,81 @@ test('T28 recorded platform VARIANT is validated on already-present AND post-loa
   assert.notEqual(c.run('import', '--manifest', bundle(c)).status, 0);
   // matching variant after load succeeds
   const d = rig({ loadVariant: 'v8' });
-  assert.equal(d.run('import', '--manifest', bundle(d, { image: v })).status, 0);
+  assert.equal(d.run('import', '--manifest', bundle(d, { image: v, tar: tar8 })).status, 0);
+});
+
+test('T38 platform (incl. VARIANT) of the archive IMAGE CONFIG is checked against the manifest BEFORE docker load, even when the alias is absent', () => {
+  const img = (variant) => ({ id: ID, alias: 'mecode-engine:t-x', sourceReference: 's', os: 'linux', architecture: 'amd64', variant });
+  const cfg = (o) => JSON.stringify({ architecture: 'amd64', os: 'linux', ...o });
+  const withCfg = (body, entry = {}) =>
+    tarOf([{ name: 'manifest.json', body: JSON.stringify([{ Config: 'blobs/c', RepoTags: ['mecode-engine:t-x'], Layers: [], ...entry }]) }, ...(body === null ? [] : [{ name: 'blobs/c', body }])]);
+  const refused = {
+    'absent alias, manifest v8 but archive config has no variant (T37-B1)': { tar: goodTar(), image: img('v8') },
+    'archive config variant v8 but manifest records none': { tar: withCfg(cfg({ variant: 'v8' })) },
+    'variant differs (v7 vs v8)': { tar: withCfg(cfg({ variant: 'v7' })), image: img('v8') },
+    'config os differs': { tar: withCfg(cfg({ os: 'windows' })) },
+    'config architecture differs': { tar: withCfg(cfg({ architecture: 'arm64' })) },
+    'manifest entry has no Config': { tar: withCfg(cfg({}), { Config: undefined }) },
+    'Config is not a string': { tar: withCfg(cfg({}), { Config: 5 }) },
+    'Config file absent from archive': { tar: withCfg(null) },
+    'Config names a directory (not a regular file)': {
+      tar: tarOf([
+        { name: 'manifest.json', body: man(['mecode-engine:t-x']) },
+        { name: 'blobs/c', type: '5' },
+      ]),
+    },
+    'duplicate Config file': {
+      tar: tarOf([
+        { name: 'manifest.json', body: man(['mecode-engine:t-x']) },
+        { name: 'blobs/c', body: CFG },
+        { name: './blobs/c', body: CFG },
+      ]),
+    },
+    'config not JSON': { tar: withCfg('{nope') },
+    'config not an object': { tar: withCfg('[]') },
+    'config os missing': { tar: withCfg(JSON.stringify({ architecture: 'amd64' })) },
+    'config architecture missing': { tar: withCfg(JSON.stringify({ os: 'linux' })) },
+    'config os wrong type': { tar: withCfg(cfg({ os: 7 })) },
+    'config variant wrong type': { tar: withCfg(cfg({ variant: 8 })) },
+    'config variant null': { tar: withCfg(cfg({ variant: null })) },
+    'config variant malformed (case is not normalized)': { tar: withCfg(cfg({ variant: 'V8' })), image: img('v8') },
+    'config os malformed (case is not normalized)': { tar: withCfg(cfg({ os: 'Linux' })) },
+    'config larger than the bound': { tar: withCfg(cfg({ pad: 'x'.repeat(1 << 20) })) },
+    'one of two entries disagrees': {
+      tar: tarOf([
+        {
+          name: 'manifest.json',
+          body: JSON.stringify([
+            { Config: 'blobs/c', RepoTags: ['mecode-engine:t-x'] },
+            { Config: 'blobs/d', RepoTags: ['mecode-engine:t-x'] },
+          ]),
+        },
+        { name: 'blobs/c', body: CFG },
+        { name: 'blobs/d', body: cfg({ variant: 'v8' }) },
+      ]),
+    },
+  };
+  for (const [name, over] of Object.entries(refused)) {
+    const r = rig();
+    const x = r.run('import', '--manifest', bundle(r, over));
+    assert.notEqual(x.status, 0, `${name}: must be refused`);
+    assert.equal(loads(r).length, 0, `${name}: docker load must not run`);
+    assert.equal(r.st().images['mecode-engine:t-x'], undefined, `${name}: no alias may be introduced`);
+  }
+  // existing alias with the manifest ID but another recorded variant is still refused before load
+  const e = rig({ images: { 'mecode-engine:t-x': `${ID}|linux|amd64|` } });
+  assert.notEqual(e.run('import', '--manifest', bundle(e, { image: img('v8') })).status, 0);
+  assert.equal(loads(e).length, 0);
+  // matching metadata still imports (absent alias): variant absent or "", and v8 on both sides
+  const accepted = [
+    [goodTar(), img('')],
+    [withCfg(cfg({ variant: '' })), img('')],
+    [withCfg(cfg({ variant: 'v8' })), img('v8')],
+  ];
+  for (const [tar, image] of accepted) {
+    const r = rig({ loadVariant: image.variant });
+    const x = r.run('import', '--manifest', bundle(r, { tar, image }));
+    assert.equal(x.status, 0, x.stderr);
+    assert.equal(loads(r).length, 1);
+  }
 });

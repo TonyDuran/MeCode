@@ -21,7 +21,7 @@ node scripts/provision-engine.cjs import --manifest <dir>/manifest.json
 MECODE_ENGINE_IMAGE=mecode-engine:<name> ./start.sh        # then Retry in the page if it was already open
 ```
 
-Refusals (nothing is loaded): checksum or size mismatch, OS/architecture different from the local Docker, an alias that already exists and points to a different image, an archive that would also tag another name, a symlink/special file as archive or manifest, the shared tag `mecode-engine:v2` as alias.
+Refusals (nothing is loaded): checksum or size mismatch, OS/architecture different from the local Docker, an alias that already exists and points to a different image, an archive that would also tag another name, or whose image config (OS/architecture/variant) differs from the manifest, a symlink/special file as archive or manifest, the shared tag `mecode-engine:v2` as alias.
 
 Limits you should know:
 
