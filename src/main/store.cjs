@@ -3,25 +3,65 @@
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { AppError, ensureRoot, safeRead, atomicWrite } = require('./safefs.cjs');
+const { LANGS } = require('../shared/validate.cjs');
 
 const h = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 40);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_SOURCE = 128 * 1024;
 const MAX_ATTEMPTS = 1000;
 const MAX_PROGRESS = 10000;
+const MAX_ACCEPTED = 512;
+const MAX_ACCEPTED_BYTES = 8 * 1024 * 1024;
+const MAX_STATE_BYTES = 16 * 1024 * 1024; // = safeRead default: a state we write must be one we can read back
+const HEX64 = /^[0-9a-f]{64}$/;
+const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 // ---- R7: strict, bounded persisted-record schemas (validated before adoption; never "fixed" silently)
 const isPlain = (o) => !!o && typeof o === 'object' && !Array.isArray(o) && Object.getPrototypeOf(o) === Object.prototype;
 const str = (v, max) => typeof v === 'string' && v.length <= max;
 const onlyKeys = (o, keys) => Object.keys(o).every((k) => keys.includes(k));
-const PROGRESS_FIELDS = { lastVerdict: 40, lastContentHash: 100, lastAt: 40, acceptedContentHash: 100, acceptedSourceHash: 100, acceptedAt: 40 };
+const PROGRESS_FIELDS = { lastVerdict: 40, lastContentHash: 100, lastAt: 40, acceptedContentHash: 100, acceptedSourceHash: 100, acceptedAt: 40, acceptedLanguage: 16 };
 const validProgress = (p) => isPlain(p) && Object.entries(p).every(([k, v]) => Object.hasOwn(PROGRESS_FIELDS, k) && str(v, PROGRESS_FIELDS[k]));
 const ATTEMPT_FIELDS = { key: 200, contentHash: 100, mode: 16, language: 16, verdict: 40, sourceHash: 100, at: 40 };
 const validAttempt = (a) =>
   isPlain(a) && onlyKeys(a, Object.keys(ATTEMPT_FIELDS)) && Object.keys(ATTEMPT_FIELDS).every((k) => str(a[k], ATTEMPT_FIELDS[k])) && ['examples', 'custom', 'submit'].includes(a.mode);
+const accKey = (key, lang) => h(`${key}\u0000${lang}`);
+const ACC_FIELDS = ['schemaVersion', 'key', 'language', 'contentHash', 'sourceHash', 'source', 'acceptedAt'];
+/** AcceptedSolution: strict fields, LANGS, 64-hex hashes, source bytes <= 128 KiB and sourceHash recomputed from the stored bytes */
+function validAccepted(r) {
+  return (
+    isPlain(r) &&
+    Object.keys(r).length === ACC_FIELDS.length &&
+    onlyKeys(r, ACC_FIELDS) &&
+    r.schemaVersion === 1 &&
+    str(r.key, 200) &&
+    LANGS.includes(r.language) &&
+    typeof r.contentHash === 'string' &&
+    HEX64.test(r.contentHash) &&
+    typeof r.sourceHash === 'string' &&
+    HEX64.test(r.sourceHash) &&
+    typeof r.source === 'string' &&
+    Buffer.byteLength(r.source) <= MAX_SOURCE &&
+    sha256(r.source) === r.sourceHash &&
+    str(r.acceptedAt, 40)
+  );
+}
+function validAcceptedMap(m) {
+  if (!isPlain(m)) return false;
+  const ks = Object.keys(m);
+  if (ks.length > MAX_ACCEPTED) return false;
+  let bytes = 0;
+  for (const k of ks) {
+    const r = m[k];
+    if (!validAccepted(r) || k !== accKey(r.key, r.language)) return false;
+    bytes += Buffer.byteLength(r.source);
+  }
+  return bytes <= MAX_ACCEPTED_BYTES;
+}
 function validState(s) {
   if (!isPlain(s) || s.schemaVersion !== 1 || typeof s.installId !== 'string' || !UUID.test(s.installId)) return false;
-  if (!onlyKeys(s, ['schemaVersion', 'installId', 'progress', 'attempts'])) return false;
+  if (!onlyKeys(s, ['schemaVersion', 'installId', 'progress', 'attempts', 'acceptedSolutions'])) return false;
+  if (s.acceptedSolutions !== undefined && !validAcceptedMap(s.acceptedSolutions)) return false;
   if (!isPlain(s.progress) || !Array.isArray(s.attempts) || s.attempts.length > MAX_ATTEMPTS) return false;
   const keys = Object.keys(s.progress);
   return keys.length <= MAX_PROGRESS && keys.every((k) => k.length <= 200 && validProgress(s.progress[k])) && s.attempts.every(validAttempt);
@@ -147,8 +187,17 @@ class Store {
       return { revision: rec.revision, updatedAt: rec.updatedAt };
     });
   }
-  recordAttempt({ key, contentHash, mode, language, verdict, sourceHash }) {
+  recordAttempt({ key, contentHash, mode, language, verdict, sourceHash, source }) {
     return this._serial(async () => {
+      const keepSource = mode === 'submit' && verdict === 'ACCEPTED';
+      if (keepSource) {
+        // exact submitted snapshot is mandatory for an acceptance: validated BEFORE anything is staged
+        if (typeof source !== 'string' || Buffer.byteLength(source) > MAX_SOURCE) throw new AppError('INVALID_INPUT', 'accepted source must be a string up to 128 KiB');
+        if (!LANGS.includes(language)) throw new AppError('INVALID_INPUT', 'bad language');
+        if (typeof sourceHash !== 'string' || sourceHash !== sha256(source)) throw new AppError('INVALID_INPUT', 'sourceHash does not match the submitted source');
+        if (typeof contentHash !== 'string' || !HEX64.test(contentHash)) throw new AppError('INVALID_INPUT', 'contentHash must be a 64-hex problem hash');
+        if (typeof key !== 'string' || key.length > 200) throw new AppError('INVALID_INPUT', 'bad key');
+      }
       const at = this.now();
       const next = structuredClone(this.state); // stage; adopt only after a durable write
       next.attempts.push({ key, contentHash, mode, language, verdict, sourceHash, at });
@@ -162,19 +211,36 @@ class Store {
           p.acceptedContentHash = contentHash;
           p.acceptedSourceHash = sourceHash;
           p.acceptedAt = at;
+          p.acceptedLanguage = language;
         }
         next.progress[key] = p;
       }
+      if (keepSource) {
+        next.acceptedSolutions = { ...(next.acceptedSolutions || {}) };
+        next.acceptedSolutions[accKey(key, language)] = { schemaVersion: 1, key, language, contentHash, sourceHash, source, acceptedAt: at };
+        // bounds are checked on the NET result (replacing the same problem/language does not count twice); unrelated records are never evicted
+        if (!validAcceptedMap(next.acceptedSolutions)) throw new AppError('INVALID_INPUT', 'accepted-solution storage is full (512 solutions / 8 MiB); nothing was saved');
+      }
       if (!validState(next)) throw new AppError('INVALID_INPUT', 'attempt record is not valid; nothing written'); // never persist what init would reject
+      if (Buffer.byteLength(JSON.stringify(next)) > MAX_STATE_BYTES) throw new AppError('INVALID_INPUT', 'state would exceed 16 MiB; nothing was saved');
       await this._writeState(next);
       this.state = next;
     });
   }
   /** solved only if acceptance was for the CURRENT content hash */
+  loadAccepted(key, language) {
+    const m = this.state.acceptedSolutions;
+    const k = accKey(key, language);
+    return m && Object.hasOwn(m, k) ? structuredClone(m[k]) : null;
+  }
+  /** solved needs the CURRENT hash AND a validated accepted record that matches the progress entry. Legacy acceptance (no stored source) is 'stale' = unverified. */
   statusOf(key, contentHash) {
     const p = Object.hasOwn(this.state.progress, key) ? this.state.progress[key] : null;
     if (!p) return 'unsolved';
-    if (p.acceptedContentHash === contentHash) return 'solved';
+    if (p.acceptedContentHash === contentHash) {
+      const r = p.acceptedLanguage ? this.loadAccepted(key, p.acceptedLanguage) : null;
+      return r && r.contentHash === contentHash && r.sourceHash === p.acceptedSourceHash ? 'solved' : 'stale';
+    }
     if (p.acceptedContentHash) return 'stale';
     return 'attempted';
   }

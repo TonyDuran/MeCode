@@ -8,6 +8,7 @@ const CHANNELS = [
   'packs.openFolder',
   'draft.load',
   'draft.save',
+  'solution.load',
   'backend.status',
   'backend.retry',
   'settings.get',

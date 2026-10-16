@@ -243,22 +243,32 @@ test('store: durable drafts, stale revision conflict, serialized saves, save fai
   assert.equal((await s3.loadDraft('p/x', 'python')).revision, 0);
 });
 
+const H1 = 'a'.repeat(64);
+const H2 = 'b'.repeat(64);
 test('store: progress only for submit+ACCEPTED on current hash; stale after pack change; corrupt state recovers from backup', async () => {
   const d = tmp();
   const s = new Store(d);
   await s.init();
-  await s.recordAttempt({ key: 'p/x', contentHash: 'h1', mode: 'custom', language: 'python', verdict: 'EXECUTED', sourceHash: 's' });
-  assert.equal(s.statusOf('p/x', 'h1'), 'unsolved');
-  await s.recordAttempt({ key: 'p/x', contentHash: 'h1', mode: 'submit', language: 'python', verdict: 'WRONG_ANSWER', sourceHash: 's' });
-  assert.equal(s.statusOf('p/x', 'h1'), 'attempted');
-  await s.recordAttempt({ key: 'p/x', contentHash: 'h1', mode: 'submit', language: 'python', verdict: 'ACCEPTED', sourceHash: 's' });
-  assert.equal(s.statusOf('p/x', 'h1'), 'solved');
-  assert.equal(s.statusOf('p/x', 'h2'), 'stale');
+  await s.recordAttempt({ key: 'p/x', contentHash: H1, mode: 'custom', language: 'python', verdict: 'EXECUTED', sourceHash: 's' });
+  assert.equal(s.statusOf('p/x', H1), 'unsolved');
+  await s.recordAttempt({ key: 'p/x', contentHash: H1, mode: 'submit', language: 'python', verdict: 'WRONG_ANSWER', sourceHash: 's' });
+  assert.equal(s.statusOf('p/x', H1), 'attempted');
+  await s.recordAttempt({
+    key: 'p/x',
+    contentHash: H1,
+    mode: 'submit',
+    language: 'python',
+    verdict: 'ACCEPTED',
+    sourceHash: require('node:crypto').createHash('sha256').update('print(1)').digest('hex'),
+    source: 'print(1)',
+  });
+  assert.equal(s.statusOf('p/x', H1), 'solved');
+  assert.equal(s.statusOf('p/x', H2), 'stale');
   fs.writeFileSync(path.join(d, 'state.json'), '{corrupt');
   const s2 = new Store(d);
   await s2.init();
   assert.ok(s2.warning);
-  assert.equal(s2.statusOf('p/x', 'h1'), 'attempted', 'backup is one write behind; loss is announced via warning');
+  assert.equal(s2.statusOf('p/x', H1), 'attempted', 'backup is one write behind; loss is announced via warning');
   fs.writeFileSync(path.join(d, 'state.json'), '{corrupt');
   fs.rmSync(path.join(d, 'state.json.bak'));
   await assert.rejects(new Store(d).init(), (e) => e instanceof AppError && e.code === 'IO_ERROR');
