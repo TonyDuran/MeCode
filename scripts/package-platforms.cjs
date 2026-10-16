@@ -21,7 +21,9 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 
 // Explicit allowlist (tracked files only, so local junk can never leak into an archive).
 const tracked = git('ls-files', '-z').split('\0').filter(Boolean);
-const include = (f) => ['README.md', 'package.json', 'scripts/make-demo-pack.cjs'].includes(f) || /^(src|engine|packs|docs)\//.test(f) || /^tests\/(unit|integration)\//.test(f);
+const include = (f) =>
+  f !== 'tests/unit/t13-archive-verify.test.cjs' &&
+  (['README.md', 'package.json', 'scripts/make-demo-pack.cjs'].includes(f) || /^(src|engine|packs|docs)\//.test(f) || /^tests\/(unit|integration)\//.test(f)); // build-tool tests need scripts/lib, which is not shipped
 const common = tracked.filter(include).sort();
 
 const IS_WIN = { linux: false, macos: false, windows: true };
