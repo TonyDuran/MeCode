@@ -168,12 +168,14 @@ async function runArchive(file, wantUnit, keepIn) {
       await new Promise((r) => setTimeout(r, 1500));
     } else {
       const installId = readInstallId(data);
-      const st = await stopLauncher(child, tracker);
+      const dockerUp = cp.spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8', timeout: 20000 }).status === 0;
+      // The server exits 3 when it cannot CONFIRM engine-container removal. Without any Docker on this host nothing could have been started, so 3 is
+      // expected there (hosted macOS/Windows archive jobs); with a working Docker only a clean 0 is accepted.
+      const st = await stopLauncher(child, tracker, { okCodes: dockerUp ? [0] : [0, 3] });
       console.log(
         `LAUNCHER-STOP ${base}: exited=${st.exited} code=${st.exitCode} signal=${st.signal} groupGone=${st.groupGone} escalated=${st.escalated} waited=${st.elapsedMs}ms installId=${installId || 'unknown'}`,
       );
       for (const p of st.problems) bad(`${base}: ${p}`);
-      const dockerUp = cp.spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8', timeout: 20000 }).status === 0;
       if (!dockerUp) console.log(`LAUNCHER-CONTAINERS ${base}: Docker did not answer; owned-container absence not asserted here (nothing could have been started)`);
       else {
         const c = await awaitInstallContainersAbsent(installId);

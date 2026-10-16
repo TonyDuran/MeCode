@@ -27,7 +27,7 @@ function trackExit(child) {
   });
   return { done: p, state: () => st };
 }
-async function stopLauncher(child, tracker, { termMs = 20000, killMs = 5000, pollMs = 50 } = {}) {
+async function stopLauncher(child, tracker, { termMs = 20000, killMs = 5000, pollMs = 50, okCodes = [0] } = {}) {
   const t0 = Date.now();
   const problems = [];
   let escalated = false;
@@ -58,7 +58,7 @@ async function stopLauncher(child, tracker, { termMs = 20000, killMs = 5000, pol
   const s = tracker.state();
   if (s && !escalated) {
     // a requested SIGTERM may surface as the signal or as a clean/handled exit; any other status is a harness failure, not "early success"
-    const okTerm = s.code === 0 || (s.code === null && s.signal === 'SIGTERM');
+    const okTerm = (s.code !== null && okCodes.includes(s.code)) || (s.code === null && s.signal === 'SIGTERM');
     if (!okTerm) problems.push(`launcher exited with code=${s.code} signal=${s.signal} after SIGTERM`);
   }
   return { exited: !!s, exitCode: s ? s.code : null, signal: s ? s.signal : null, groupGone: gone, escalated, elapsedMs: Date.now() - t0, problems };

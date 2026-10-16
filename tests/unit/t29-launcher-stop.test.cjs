@@ -47,6 +47,18 @@ test('NONZERO exit after SIGTERM is a reported problem (exit status preserved)',
   );
 });
 
+test('exit 3 (engine removal unconfirmed) is accepted ONLY when the caller says no Docker was available; default stays strict', async () => {
+  const a = launch(`trap 'exit 3' TERM; while :; do sleep 0.1; done`);
+  await settleStart();
+  const r = await stopLauncher(a.child, a.tr, { termMs: 5000, killMs: 2000, okCodes: [0, 3] });
+  assert.equal(r.exitCode, 3);
+  assert.deepEqual(r.problems, []);
+  const b = launch(`trap 'exit 2' TERM; while :; do sleep 0.1; done`);
+  await settleStart();
+  const r2 = await stopLauncher(b.child, b.tr, { termMs: 5000, killMs: 2000, okCodes: [0, 3] });
+  assert.ok(r2.problems.some((x) => /code=2/.test(x)));
+});
+
 test('a launcher that ignores SIGTERM past the bound is escalated, reported as a problem, and the group is really gone', async () => {
   const { child, tr } = launch(`trap '' TERM; while :; do sleep 0.1; done`);
   await settleStart();

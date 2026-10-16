@@ -49,7 +49,7 @@ launcher start-up checks in CI (no Docker run). CI builds and discards these arc
 
 ## T29 repairs (after the T28 review)
 
-- Unit gate is now 139 tests; the extracted package runs 111 (dev-only tests excluded from archives: t13-archive-verify, t18-catalog-gate, t27-provision, t29-launcher-stop, t29-wrong-baseline). Counts follow the actual enumeration (`node --test tests/unit/*.test.cjs`), not an estimate.
+- Unit gate is now 140 tests; the extracted package runs 111 (dev-only tests excluded from archives: t13-archive-verify, t18-catalog-gate, t27-provision, t29-launcher-stop, t29-wrong-baseline). Counts follow the actual enumeration (`node --test tests/unit/*.test.cjs`), not an estimate.
 - Provisioning import inspects the `docker save` tar BEFORE `docker load` and fails closed unless there is exactly one regular `manifest.json` whose every entry has a nonempty RepoTags consisting only of the alias (an optional `index.json`/`repositories` may not name another tag). It also checks the recorded platform INCLUDING variant on the already-present and post-load paths. Scope: tag-overwrite protection for an honest export, not publisher authentication or a same-user security boundary; no native ARM/Windows/macOS execution is claimed.
 - `acceptedAt` must be a real ISO-8601 UTC instant; a bad value in the primary state falls back to the backup like any other invalid state.
 - The renderer re-derives the ACCEPTED qualification on every render from the exact text it submitted (private to the page); a late result, edit, save or navigate away/back never shows a bare ACCEPTED for a different buffer.
