@@ -17,7 +17,14 @@ const lockErr = (message) => { const err = new Error(message); err.code = 'LOCKE
 function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; } }
 /** Complete lock record, or null when unreadable/incomplete/ambiguous (callers then FAIL CLOSED; never delete). */
 function readLock(f) {
-  let raw; try { raw = fs.readFileSync(f, 'utf8'); } catch (e) { return e.code === 'ENOENT' ? { missing: true } : null; }
+  let raw, fd;
+  try {
+    // F1: never block on a special file: lstat first (non-regular => unreadable => fail closed), then O_NONBLOCK|O_NOFOLLOW + fstat.
+    if (!fs.lstatSync(f).isFile()) return null;
+    fd = fs.openSync(f, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const st = fs.fstatSync(fd); if (!st.isFile() || st.size > 4096) return null;
+    raw = fs.readFileSync(fd, 'utf8');
+  } catch (e) { return e.code === 'ENOENT' ? { missing: true } : null; } finally { try { if (fd !== undefined) fs.closeSync(fd); } catch { /* ignore */ } }
   let o; try { o = JSON.parse(raw); } catch { return null; }
   if (!o || typeof o !== 'object' || !Number.isInteger(o.pid) || o.pid <= 0 || (o.nonce !== undefined && (typeof o.nonce !== 'string' || o.nonce.length > 64))) return null;
   return { pid: o.pid, nonce: o.nonce };

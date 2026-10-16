@@ -60,7 +60,10 @@ class Store {
     const f = path.join(this.dir, 'state.json');
     let cur;
     try { cur = await safeRead(f, this.fsx); } catch (e) { if (e.code !== 'ENOENT') throw e; } // ENOENT only on the very first write
-    if (cur !== undefined) await atomicWrite(`${f}.bak`, cur, this.fsx); // safe backup: never follows a symlink
+    // F2: only a VALIDATED primary may replace the backup; an unusable primary must never overwrite the last good backup
+    // (otherwise a failed primary rename after recovery would lose both copies).
+    let curValid = false; if (cur !== undefined) { try { curValid = validState(JSON.parse(cur)); } catch { /* invalid JSON */ } }
+    if (curValid) await atomicWrite(`${f}.bak`, cur, this.fsx); // safe backup: never follows a symlink
     await atomicWrite(f, JSON.stringify(next), this.fsx);
   }
   get installId() { return this.state.installId; }

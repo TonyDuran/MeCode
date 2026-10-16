@@ -41,7 +41,10 @@ async function safeRead(file, fsx = fs.promises, maxBytes = 16 * 1024 * 1024) {
   try { await ensureDir(path.dirname(file), fsx, false); } catch (e) { if (e.enoent) { const m = new Error('ENOENT'); m.code = 'ENOENT'; throw m; } throw e; }
   let fh;
   try {
-    fh = await fsx.open(file, C.O_RDONLY | C.O_NOFOLLOW);
+    // F1: reject non-regular leaves (FIFO/device/socket/symlink) BEFORE any open that could block; O_NONBLOCK is defense in depth
+    // so a FIFO swapped in after the lstat still cannot hang us (the fstat below rejects it).
+    if (!(await leafStat(file, fsx))) { const m = new Error('ENOENT'); m.code = 'ENOENT'; throw m; }
+    fh = await fsx.open(file, C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
     const st = await fh.stat();
     if (!st.isFile()) throw unsafe('not a regular file', file);
     if (st.size > maxBytes) throw new AppError('IO_ERROR', `${path.basename(file)} is larger than the allowed ${maxBytes} bytes`);
