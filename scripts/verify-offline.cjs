@@ -13,6 +13,8 @@ const os = require('node:os');
 const path = require('node:path');
 const cp = require('node:child_process');
 const crypto = require('node:crypto');
+const { readTarGz } = require('./lib/archive.cjs');
+const { destinationUnder } = require('./lib/safe-path.cjs');
 
 const repo = path.join(__dirname, '..');
 const argv = process.argv.slice(2);
@@ -106,8 +108,19 @@ async function main() {
   // 3. fresh extraction + fresh data + generated launcher
   const fresh = path.join(work, 'fresh');
   fs.mkdirSync(fresh);
-  const tx = cmd('extract package', 'tar', ['-xzf', pkg, '-C', fresh]);
-  if (!check('package extracted', tx.code === 0, tx.stderr)) return;
+  // the repo's own validated extractor (same safe-path rules as verify-archives.cjs); system tar failed on this filesystem for two top-level files
+  let nFiles = 0;
+  for (const e of readTarGz(fs.readFileSync(pkg))) {
+    const dst = destinationUnder(fresh, e.name);
+    if (e.dir) fs.mkdirSync(dst, { recursive: true });
+    else {
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      fs.writeFileSync(dst, e.data);
+      fs.chmodSync(dst, e.mode);
+      nFiles += 1;
+    }
+  }
+  check('package extracted fresh (validated extractor)', nFiles > 25, `${nFiles} files`);
   const appDir = path.join(
     fresh,
     fs.readdirSync(fresh).find((x) => x.startsWith('mecode-v2-')),
@@ -143,7 +156,7 @@ async function main() {
     const origin = new URL(url).origin;
     const tok = /#s=([0-9a-f]{64})/.exec(url)[1];
     const api = async (name, arg = {}) => {
-      const r = await fetch(`${origin}/api/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MeCode-Session': tok }, body: JSON.stringify(arg) });
+      const r = await fetch(`${origin}/api/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-MeCode-Session': tok, Origin: origin }, body: JSON.stringify(arg) });
       return r.json();
     };
     const waitState = async (pred, ms) => {

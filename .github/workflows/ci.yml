@@ -40,11 +40,11 @@ jobs:
         run: npm run lint
       - name: Type check (tsc --noEmit, checkJs over src/ and scripts/)
         run: npm run typecheck
-      - name: Unit tests (fake-engine and local-web socket tests; expect 96 pass, 0 skipped)
+      - name: Unit tests (fake-engine and local-web socket tests; expect 126 pass, 0 skipped)
         run: |
           npm test 2>&1 | tee unit.log
           grep -E '^ℹ (tests|pass|fail|skipped)' unit.log
-          grep -q '^ℹ tests 100$' unit.log && grep -q '^ℹ pass 100$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
+          grep -q '^ℹ tests 126$' unit.log && grep -q '^ℹ pass 126$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
       - name: Catalog gate (48 problems / 18 patterns / provenance; every reference executed on every stored case; brute oracles; wrong baselines must fail; generated artifacts current)
         run: |
           set -o pipefail
@@ -113,6 +113,8 @@ jobs:
         run: |
           set -o pipefail
           npm run test:e2e 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/gui.log
+          grep -q 'GUI-FLOW-COMPLETE' test-results/gui.log && grep -q 'GUI-ACCEPTED-FLOW-COMPLETE' test-results/gui.log
+          grep -q '^ℹ fail 0$' test-results/gui.log && grep -q '^ℹ skipped 0$' test-results/gui.log
       - name: Negative canaries (each must go red at its NAMED assertion after real execution)
         run: |
           set -o pipefail
@@ -130,6 +132,13 @@ jobs:
           (cd "$APP" && MECODE_REAL_DOCKER=1 node --test --test-concurrency=1 tests/integration/docker.test.cjs 2>&1 | tee "$GITHUB_WORKSPACE/test-results/fresh-integration.log")
           grep -q '^ℹ pass 6$' test-results/fresh-integration.log && grep -q '^ℹ skipped 0$' test-results/fresh-integration.log
           MECODE_E2E_APP_ROOT="$APP" npm run test:e2e 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/fresh-gui.log
+          grep -q 'GUI-ACCEPTED-FLOW-COMPLETE' test-results/fresh-gui.log
+      - name: Offline gate - export under a task alias, remove ONLY that alias, fresh extracted package + fresh data, missing-image state, verified import, Retry, four real accepted languages (scoped app/browser evidence; no downloads, no uploads)
+        run: |
+          set -o pipefail
+          node scripts/verify-offline.cjs --package "$(ls dist/platform/*-linux.tar.gz)" --out "$RUNNER_TEMP/offline-evidence" --browser 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/offline.log
+          grep -q '^OFFLINE-VERIFY passed=39 failed=0 ' test-results/offline.log
+          ! grep -q '^FAIL ' test-results/offline.log
       - name: No task-owned containers left
         if: always()
         run: test -z "$(docker ps -aq --filter label=mecode.app=mecode-v2)"

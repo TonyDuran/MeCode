@@ -39,3 +39,10 @@ launcher scripts (`start.sh` / `start.command` / `start.cmd`, `build-engine.*`),
 tests, `INSTALL.md` and `MANIFEST.json` (exact source revision/tree, per-file sha256 and mode). Rebuilding the same commit yields byte-identical archives.
 Unsigned. Docker and Node are manual prerequisites. Only Linux x64 + Docker is exercised end to end; Windows/macOS get structure and
 launcher start-up checks in CI (no Docker run). CI builds and discards these archives; nothing is published.
+
+## T27 additions (accepted solutions + offline provisioning)
+
+- Unit gate is now 126 tests (120 are shipped in the archives; `tests/unit/t27-provision.test.cjs` is a dev-only POSIX fake-docker mock test and is excluded from archives).
+- `npm run test:e2e` also runs `tests/e2e/accepted-gui.test.cjs` (real Chrome + real server + real engine: accepted submit, wrong draft saved, restart, explicit "Load accepted solution").
+- `scripts/verify-offline.cjs` (dev-only, real Docker) runs after the Linux archive is built: export under a task-owned alias, remove only that alias tag, fresh extracted package and fresh data, missing-image state, verified import, Retry, four real accepted submissions. Evidence is scoped to the app/browser, not whole-host isolation. Nothing is uploaded; only failure-time text/screenshots follow the existing 3-day policy.
+- Historical rootful d9 cleanup race: still an unresolved residual; none of these gates claims to fix it.
