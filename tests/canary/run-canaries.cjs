@@ -17,7 +17,7 @@ const results = [];
 function child(name, args, env, timeoutMs) {
   const r = cp.spawnSync(process.execPath, args, { cwd: repoRoot, env: { ...process.env, ...env }, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 });
   const text = `${r.stdout || ''}\n${r.stderr || ''}`;
-  fs.writeFileSync(path.join(outDir, `canary-${name}.log`), text.slice(0, 200000));
+  fs.writeFileSync(path.join(outDir, `canary-${name}.log`), text.replace(/#s=[0-9a-f]{16,}/g, '#s=REDACTED').slice(0, 200000));
   return { code: r.status, signal: r.signal, text };
 }
 function check(name, desc, ok, detail) {

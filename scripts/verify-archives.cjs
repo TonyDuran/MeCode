@@ -92,7 +92,7 @@ async function runArchive(file, wantUnit, keepIn) {
   );
   console.log(`EXTRACTED ${base} -> fresh dir (app dir ${path.basename(appDir)})`);
   if (wantUnit) {
-    const r = cp.spawnSync(process.execPath, ['--test', 'tests/unit/'], { cwd: appDir, encoding: 'utf8', timeout: 240000 });
+    const r = cp.spawnSync(process.execPath, ['--test', 'tests/unit/*.test.cjs'], { cwd: appDir, encoding: 'utf8', timeout: 240000 });
     const m = (k) => (new RegExp(`^ℹ ${k} (\\d+)`, 'm').exec(r.stdout) || [])[1];
     console.log(`EXTRACTED-UNIT exit=${r.status} tests=${m('tests')} pass=${m('pass')} fail=${m('fail')} skipped=${m('skipped')}`);
     if (r.status !== 0) bad(`${base}: unit tests failed in the extracted tree`);
