@@ -99,6 +99,7 @@ function boot() {
   const api = {
     catalog: ns('catalog', ['list', 'get']),
     draft: ns('draft', ['load', 'save']),
+    solution: ns('solution', ['load']),
     backend: ns('backend', ['status', 'retry']),
     packs: ns('packs', ['import', 'reload']),
     settings: ns('settings', ['get', 'update']),
@@ -316,3 +317,88 @@ test('R2 save failure blocks navigation and keeps the draft editable', async () 
   assert.equal(t.$('editor').disabled, false);
   assert.match(t.$('saveState').textContent, /SAVE FAILED/);
 });
+
+// ---- T27: explicit "Load accepted solution" (vm harness = mock API; real-browser flow is tests/e2e/accepted-gui.test.cjs)
+const SOL = (source = 'ACCEPTED-SRC') => ({
+  solution: { schemaVersion: 1, key: 'A', language: 'python', contentHash: 'c'.repeat(64), sourceHash: 's'.repeat(64), source, acceptedAt: '2026-01-01T00:00:00.000Z' },
+  stale: false,
+});
+test('T27 Load accepted: disabled while dirty/pending save/transition/loadFailed; never saves; replaces editor only on explicit success and stays unsaved', async () => {
+  const t = boot();
+  await ready(t);
+  await open(t, 'A');
+  assert.equal(t.$('loadAccepted').disabled, false);
+  t.$('editor').type('wrong draft');
+  assert.equal(t.$('loadAccepted').disabled, true, 'dirty');
+  assert.match(t.$('acceptedHint').textContent, /Save your draft before loading accepted source/);
+  assert.equal(t.$('loadAccepted').click(), false);
+  t.$('save').click(); // draft.save is held? auto-resolves; before settle S.pending>0
+  assert.equal(t.$('loadAccepted').disabled, true, 'pending save');
+  await tick();
+  assert.equal(t.$('loadAccepted').disabled, false);
+  const saves = t.callsOf('draft.save').length;
+  t.auto['solution.load'] = () => t.ok(SOL());
+  t.$('loadAccepted').click();
+  await tick();
+  assert.equal(t.$('editor').value, 'ACCEPTED-SRC');
+  assert.equal(t.callsOf('draft.save').length, saves, 'loading never saves');
+  assert.equal(t.store.drafts.get('A|python'), 'wrong draft', 'wrong draft stays on disk');
+  assert.match(t.$('saveState').textContent, /not saved yet/);
+  assert.equal(t.$('loadAccepted').disabled, true, 'loaded text is dirty until the user saves');
+});
+test('T27 Load accepted: null / error / stale responses never silently replace the editor; stale is labelled', async () => {
+  const t = boot();
+  await ready(t);
+  await open(t, 'A');
+  t.$('editor').type('mine');
+  t.$('save').click();
+  await tick();
+  t.auto['solution.load'] = () => t.ok({ solution: null, stale: false });
+  t.$('loadAccepted').click();
+  await tick();
+  assert.equal(t.$('editor').value, 'mine');
+  assert.match(t.$('acceptedInfo').textContent, /No accepted solution/);
+  t.auto['solution.load'] = () => ({ ok: false, error: { code: 'IO_ERROR', message: 'boom' } });
+  t.$('loadAccepted').click();
+  await tick();
+  assert.equal(t.$('editor').value, 'mine');
+  assert.match(t.$('acceptedInfo').textContent, /boom/);
+  t.auto['solution.load'] = () => t.ok({ ...SOL('OLD'), stale: true });
+  t.$('loadAccepted').click();
+  await tick();
+  assert.equal(t.$('editor').value, 'OLD');
+  assert.match(t.$('acceptedInfo').textContent, /STALE/);
+});
+test('T27 Load accepted: superseded by navigation => late response inert; owning generation only unlocks; draft-load failure not bypassed', async () => {
+  const t = boot();
+  await ready(t);
+  await open(t, 'A');
+  t.hold.add('solution.load');
+  t.$('loadAccepted').click();
+  await tick();
+  assert.equal(t.$('editor').disabled, true, 'locked during the load');
+  await open(t, 'B'); // supersedes
+  await tick();
+  const late = t.find('solution.load');
+  await t.settle(late, t.ok(SOL('LATE-FOR-A')));
+  assert.equal(t.$('editor').value, '# starter B py', 'late response for A must not touch B');
+  assert.equal(t.$('editor').disabled, false);
+  // draft load failure: button stays disabled, nothing loads
+  t.auto['draft.load'] = () => ({ ok: false, error: { code: 'IO_ERROR', message: 'bad draft' } });
+  await open(t, 'C');
+  assert.equal(t.$('loadAccepted').disabled, true);
+  assert.equal(t.$('loadAccepted').click(), false);
+  assert.equal(t.callsOf('solution.load').length, 1);
+});
+test('T27 a shown ACCEPTED verdict is qualified when the editor changes; persistence failure text says source and progress were NOT saved', async () => {
+  const t = boot();
+  await ready(t);
+  await open(t, 'A');
+  t.$('verdict').textContent = 'submit: ACCEPTED';
+  t.$('editor').type('x');
+  assert.match(t.$('verdict').textContent, /editor text changed since this result/);
+  assert.match(vm_show_src(), /Execution accepted; accepted source and progress were NOT saved/);
+});
+function vm_show_src() {
+  return code;
+}
