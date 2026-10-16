@@ -27,6 +27,12 @@ const validAttempt = (a) =>
   isPlain(a) && onlyKeys(a, Object.keys(ATTEMPT_FIELDS)) && Object.keys(ATTEMPT_FIELDS).every((k) => str(a[k], ATTEMPT_FIELDS[k])) && ['examples', 'custom', 'submit'].includes(a.mode);
 const accKey = (key, lang) => h(`${key}\u0000${lang}`);
 const ACC_FIELDS = ['schemaVersion', 'key', 'language', 'contentHash', 'sourceHash', 'source', 'acceptedAt'];
+/** a real ISO-8601 UTC instant as produced by Date#toISOString (never normalized or guessed) */
+function isoUtc(t) {
+  if (typeof t !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(t)) return false;
+  const ms = Date.parse(t);
+  return Number.isFinite(ms) && new Date(ms).toISOString() === t;
+}
 /** AcceptedSolution: strict fields, LANGS, 64-hex hashes, source bytes <= 128 KiB and sourceHash recomputed from the stored bytes */
 function validAccepted(r) {
   return (
@@ -43,7 +49,7 @@ function validAccepted(r) {
     typeof r.source === 'string' &&
     Buffer.byteLength(r.source) <= MAX_SOURCE &&
     sha256(r.source) === r.sourceHash &&
-    str(r.acceptedAt, 40)
+    isoUtc(r.acceptedAt)
   );
 }
 function validAcceptedMap(m) {

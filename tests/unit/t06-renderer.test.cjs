@@ -390,15 +390,44 @@ test('T27 Load accepted: superseded by navigation => late response inert; owning
   assert.equal(t.$('loadAccepted').click(), false);
   assert.equal(t.callsOf('solution.load').length, 1);
 });
-test('T27 a shown ACCEPTED verdict is qualified when the editor changes; persistence failure text says source and progress were NOT saved', async () => {
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const RES = (extra = {}) => ({ mode: 'submit', verdict: 'ACCEPTED', cases: [], persistence: 'saved', solutionPersistence: 'saved', cleanup: { confirmed: true }, ...extra });
+test('T28 historical ACCEPTED stays historical: edit during held job, result arrival, further edits, navigate away/back; persistence warning kept', async () => {
   const t = boot();
   await ready(t);
   await open(t, 'A');
-  t.$('verdict').textContent = 'submit: ACCEPTED';
-  t.$('editor').type('x');
-  assert.match(t.$('verdict').textContent, /editor text changed since this result/);
-  assert.match(vm_show_src(), /Execution accepted; accepted source and progress were NOT saved/);
+  t.$('editor').type('submitted-src');
+  t.auto['execution.start'] = () => t.ok({ jobId: 'j1' });
+  t.hold.add('execution.get');
+  t.$('submit').click();
+  await tick(30);
+  assert.equal(t.callsOf('execution.start')[0].args.source, 'submitted-src');
+  t.$('editor').type('edited-while-running');
+  await wait(300);
+  await tick();
+  const g = t.find('execution.get');
+  assert.ok(g, 'poll reached the held execution.get');
+  t.hold.delete('execution.get');
+  await t.settle(g, t.ok({ state: 'done', result: RES({ persistence: 'failed', solutionPersistence: 'failed', persistError: 'disk' }) }));
+  const v = () => t.$('verdict').textContent;
+  assert.match(v(), /ACCEPTED/);
+  assert.match(v(), /editor text changed since this result/, 'arrival must not paint a bare ACCEPTED over a different buffer');
+  assert.match(v(), /NOT saved/, 'persistence-failed warning kept');
+  t.$('editor').type('edited-again');
+  assert.match(v(), /editor text changed since this result/);
+  assert.equal((v().match(/editor text changed/g) || []).length, 1, 'qualifier is not duplicated');
+  t.$('save').click();
+  await tick();
+  t.auto['draft.load'] = ({ key, language }) => t.ok({ source: t.store.drafts.has(`${key}|${language}`) ? t.store.drafts.get(`${key}|${language}`) : null, revision: 1, updatedAt: 'now' });
+  await open(t, 'B');
+  await open(t, 'A');
+  assert.equal(t.$('editor').value, 'edited-again');
+  assert.match(v(), /ACCEPTED/);
+  assert.match(v(), /editor text changed since this result/, 'navigate away/back must not drop the qualification');
+  assert.match(v(), /NOT saved/);
+  // typing the exact submitted text back is the only way the result describes the current buffer again
+  t.$('editor').type('submitted-src');
+  assert.doesNotMatch(v(), /editor text changed/);
+  t.$('editor').type('other');
+  assert.match(v(), /editor text changed since this result/);
 });
-function vm_show_src() {
-  return code;
-}

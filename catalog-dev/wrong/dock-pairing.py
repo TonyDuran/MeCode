@@ -32,10 +32,15 @@ def s_dock(inp):
     return f"{r}\n"
 
 
-def w_dock(inp):  # counts index pairs, so repeated values inflate the answer
+def w_dock(inp):  # counts index pairs (i < j), so repeated values inflate the answer; linear frequency accumulation, same output as the O(n^2) double loop
     d = ints(inp)
     n, t, a = d[0], d[1], d[2 : 2 + d[0]]
-    return f"{sum(1 for i in range(n) for j in range(i + 1, n) if a[i] + a[j] == t)}\n"
+    seen = {}
+    r = 0
+    for x in a:
+        r += seen.get(t - x, 0)
+        seen[x] = seen.get(x, 0) + 1
+    return f"{r}\n"
 
 
 sys.stdout.write(w_dock(sys.stdin.read()))

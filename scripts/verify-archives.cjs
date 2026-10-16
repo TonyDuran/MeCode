@@ -13,6 +13,7 @@ const crypto = require('node:crypto');
 const cp = require('node:child_process');
 const { readTarGz, readZip } = require('./lib/archive.cjs');
 const { entryProblem, destinationUnder } = require('./lib/safe-path.cjs');
+const { trackExit, stopLauncher, readInstallId, awaitInstallContainersAbsent } = require('./lib/launcher-stop.cjs');
 
 const root = path.join(__dirname, '..');
 const argv = process.argv;
@@ -137,6 +138,7 @@ async function runArchive(file, wantUnit, keepIn) {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: process.platform !== 'win32',
   });
+  const tracker = trackExit(child);
   let out = '';
   child.stdout.on('data', (d) => (out = (out + d).slice(-4000)));
   child.stderr.on('data', (d) => (out = (out + d).slice(-4000)));
@@ -160,15 +162,29 @@ async function runArchive(file, wantUnit, keepIn) {
   } catch (e) {
     bad(`${base}: ${e.message}`);
   } finally {
-    if (process.platform === 'win32') cp.spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-    else {
-      try {
-        process.kill(-child.pid, 'SIGTERM');
-      } catch {
-        /* already gone */
+    // Bounded await of the exact launcher process group THIS harness spawned, then an exact install-label container check (no sweeps/prunes).
+    if (process.platform === 'win32') {
+      cp.spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+      await new Promise((r) => setTimeout(r, 1500));
+    } else {
+      const installId = readInstallId(data);
+      const st = await stopLauncher(child, tracker);
+      console.log(
+        `LAUNCHER-STOP ${base}: exited=${st.exited} code=${st.exitCode} signal=${st.signal} groupGone=${st.groupGone} escalated=${st.escalated} waited=${st.elapsedMs}ms installId=${installId || 'unknown'}`,
+      );
+      for (const p of st.problems) bad(`${base}: ${p}`);
+      const dockerUp = cp.spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8', timeout: 20000 }).status === 0;
+      if (!dockerUp) console.log(`LAUNCHER-CONTAINERS ${base}: Docker did not answer; owned-container absence not asserted here (nothing could have been started)`);
+      else {
+        const c = await awaitInstallContainersAbsent(installId);
+        console.log(`LAUNCHER-CONTAINERS ${base}: installId=${installId || 'unknown'} checked=${c.checked} absent=${c.absent}${c.reason ? ` reason=${JSON.stringify(c.reason)}` : ''}`);
+        for (const r of c.rows)
+          console.log(
+            `LAUNCHER-CONTAINERS-LEFT id=${r.id.slice(0, 12)} name=${r.names} state=${r.state} status=${JSON.stringify(r.status)} created=${JSON.stringify(r.createdAt)} image=${r.image} labels=${JSON.stringify(r.labels)}`,
+          );
+        if (!c.absent) bad(`${base}: install-owned containers not confirmed absent after launcher stop (${c.reason})`);
       }
     }
-    await new Promise((r) => setTimeout(r, 1500));
     if (!keepIn) fs.rmSync(tmp, { recursive: true, force: true });
   }
 }

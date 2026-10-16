@@ -24,10 +24,39 @@ if (a[0] === 'version') { process.stdout.write(st.platform + '\\n'); process.exi
 if (a[0] === 'image' && a[1] === 'inspect') { const i = st.images[a[2]]; if (!i) process.exit(1); process.stdout.write(i + '\\n'); process.exit(0); }
 if (a[0] === 'tag') { st.images[a[2]] = st.images[a[1]]; save(); process.exit(0); }
 if (a[0] === 'save') { fs.writeFileSync(a[2], st.saveBytes); process.exit(st.saveFail ? 1 : 0); }
-if (a[0] === 'load') { st.images[st.loadAs] = st.loadId + '|linux|amd64|'; save(); process.exit(0); }
+if (a[0] === 'load') { st.images[st.loadAs] = st.loadId + '|linux|amd64|' + (st.loadVariant || ''); save(); process.exit(0); }
 if (a[0] === 'image' && a[1] === 'rm') { delete st.images[a[2]]; save(); process.exit(0); }
 process.exit(9);
 `;
+
+/** minimal ACTUAL ustar archive (valid header checksums) */
+function tarOf(entries, { end = true, mutate } = {}) {
+  const blocks = [];
+  for (const e of entries) {
+    const body = Buffer.from(e.body === undefined ? '' : e.body);
+    const h = Buffer.alloc(512);
+    h.write(e.name, 0);
+    h.write('0000644\0', 100);
+    h.write(`${body.length.toString(8).padStart(11, '0')}\0`, 124);
+    h.write('00000000000\0', 136);
+    h.write(e.type || '0', 156);
+    h.write('ustar\0' + '00', 257);
+    h.write('        ', 148);
+    let sum = 0;
+    for (const b of h) sum += b;
+    h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148);
+    blocks.push(h, body, Buffer.alloc(Math.ceil(body.length / 512) * 512 - body.length));
+  }
+  if (end) blocks.push(Buffer.alloc(1024));
+  const t = Buffer.concat(blocks);
+  return mutate ? mutate(t) : t;
+}
+const man = (tags) => JSON.stringify([{ Config: 'blobs/c', RepoTags: tags, Layers: [] }]);
+const goodTar = (alias = 'mecode-engine:t-x') =>
+  tarOf([
+    { name: 'blobs/', type: '5' },
+    { name: 'manifest.json', body: man([alias]) },
+  ]);
 
 function rig(state = {}) {
   const d = tmp();
@@ -53,7 +82,8 @@ function rig(state = {}) {
 function bundle(r, over = {}) {
   const dir = path.join(r.d, 'bundle');
   fs.mkdirSync(dir);
-  const bytes = Buffer.from('some-archive-bytes');
+  const bytes = over.tar || goodTar();
+  delete over.tar;
   fs.writeFileSync(path.join(dir, 'engine.tar'), bytes);
   const m = {
     schemaVersion: 1,
@@ -157,28 +187,82 @@ test('import REFUSES before docker load: bad checksum, wrong size, platform mism
   assert.equal(sm.calls().filter((c) => c[0] === 'pull').length, 0);
 });
 
-test('import: loaded alias that does not match the manifest id fails nonzero; archive that also tags another name is refused before load', () => {
+test('import: loaded alias that does not match the manifest id fails nonzero', () => {
   const r = rig({ loadId: ID2 });
   const x = r.run('import', '--manifest', bundle(r));
   assert.notEqual(x.status, 0);
   assert.equal(loads(r).length, 1);
-  // tar with docker manifest.json naming the shared tag
-  const r2 = rig();
-  const mf = bundle(r2);
-  const body = Buffer.from(JSON.stringify([{ RepoTags: ['mecode-engine:t-x', 'mecode-engine:v2'] }]));
-  const hdr = Buffer.alloc(512);
-  hdr.write('manifest.json', 0);
-  hdr.write(`${body.length.toString(8).padStart(11, '0')}\0`, 124);
-  const pad = Buffer.alloc(Math.ceil(body.length / 512) * 512 - body.length);
-  const tar = Buffer.concat([hdr, body, pad, Buffer.alloc(1024)]);
-  const dir = path.dirname(mf);
-  fs.writeFileSync(path.join(dir, 'engine.tar'), tar);
-  const m = JSON.parse(fs.readFileSync(mf, 'utf8'));
-  m.archive.bytes = tar.length;
-  m.archive.sha256 = crypto.createHash('sha256').update(tar).digest('hex');
-  fs.writeFileSync(mf, JSON.stringify(m));
-  const y = r2.run('import', '--manifest', mf);
+});
+
+test('T28 import FAILS CLOSED before docker load on absent/duplicate/unsupported/ambiguous/malformed tag metadata (ZERO load calls)', () => {
+  const good = (extra = []) => tarOf([{ name: 'manifest.json', body: man(['mecode-engine:t-x']) }, ...extra]);
+  const cases = {
+    'arbitrary non-tar bytes': Buffer.from('some-archive-bytes'),
+    'empty archive (end marker only)': tarOf([]),
+    'no manifest.json': tarOf([{ name: 'other.json', body: '[]' }]),
+    'duplicate manifest.json': tarOf([
+      { name: 'manifest.json', body: man(['mecode-engine:t-x']) },
+      { name: './manifest.json', body: man(['mecode-engine:t-x']) },
+    ]),
+    'unexpected original tag': tarOf([{ name: 'manifest.json', body: man(['mecode-engine:t-x', 'mecode-engine:v2']) }]),
+    'only an unexpected tag': tarOf([{ name: 'manifest.json', body: man(['mecode-engine:v2']) }]),
+    'empty RepoTags': tarOf([{ name: 'manifest.json', body: man([]) }]),
+    'RepoTags null (untagged)': tarOf([{ name: 'manifest.json', body: JSON.stringify([{ Config: 'c', RepoTags: null, Layers: [] }]) }]),
+    'second entry without tags': tarOf([{ name: 'manifest.json', body: JSON.stringify([{ RepoTags: ['mecode-engine:t-x'] }, { Layers: [] }]) }]),
+    'empty manifest list': tarOf([{ name: 'manifest.json', body: '[]' }]),
+    'manifest not JSON': tarOf([{ name: 'manifest.json', body: '{nope' }]),
+    'manifest not an array': tarOf([{ name: 'manifest.json', body: '{}' }]),
+    'non-string tag': tarOf([{ name: 'manifest.json', body: JSON.stringify([{ RepoTags: [7] }]) }]),
+    'bad header checksum': tarOf([{ name: 'manifest.json', body: man(['mecode-engine:t-x']) }], { mutate: (t) => (t[0] ^= 1) && t }),
+    'missing end-of-archive marker': tarOf([{ name: 'manifest.json', body: man(['mecode-engine:t-x']) }], { end: false }),
+    'truncated member': tarOf([{ name: 'manifest.json', body: man(['mecode-engine:t-x']) }], { mutate: (t) => t.subarray(0, 600) }),
+    'unsupported entry type (symlink)': good([{ name: 'evil', type: '2' }]),
+    'index.json names another tag': good([{ name: 'index.json', body: JSON.stringify({ manifests: [{ annotations: { 'io.containerd.image.name': 'docker.io/library/mecode-engine:v2' } }] }) }]),
+    'index.json malformed': good([{ name: 'index.json', body: '[]' }]),
+    'duplicate index.json': good([
+      { name: 'index.json', body: '{"manifests":[]}' },
+      { name: 'index.json', body: '{"manifests":[]}' },
+    ]),
+    'legacy repositories names another tag': good([{ name: 'repositories', body: JSON.stringify({ 'mecode-engine': { v2: 'abc' } }) }]),
+  };
+  for (const [name, tar] of Object.entries(cases)) {
+    const r = rig();
+    const x = r.run('import', '--manifest', bundle(r, { tar }));
+    assert.notEqual(x.status, 0, `${name}: must be refused`);
+    assert.equal(loads(r).length, 0, `${name}: docker load must not run`);
+  }
+  // supported variants still import: alias-only index.json (as the real exporter writes) and repositories
+  const r = rig();
+  const ok = good([
+    { name: 'index.json', body: JSON.stringify({ manifests: [{ annotations: { 'io.containerd.image.name': 'docker.io/library/mecode-engine:t-x', 'org.opencontainers.image.ref.name': 't-x' } }] }) },
+    { name: 'repositories', body: JSON.stringify({ 'mecode-engine': { 't-x': 'abc' } }) },
+  ]);
+  const x = r.run('import', '--manifest', bundle(r, { tar: ok }));
+  assert.equal(x.status, 0, x.stderr);
+  assert.equal(loads(r).length, 1);
+});
+
+test('T28 recorded platform VARIANT is validated on already-present AND post-load paths (id/os/arch alone is not enough)', () => {
+  const v = { id: ID, alias: 'mecode-engine:t-x', sourceReference: 's', os: 'linux', architecture: 'amd64', variant: 'v8' };
+  // already present: same ID, different variant => refuse, no load
+  const a = rig({ images: { 'mecode-engine:t-x': `${ID}|linux|amd64|` } });
+  const x = a.run('import', '--manifest', bundle(a, { image: v }));
+  assert.notEqual(x.status, 0);
+  assert.match(x.stderr, /platform/);
+  assert.equal(loads(a).length, 0);
+  // already present with the matching variant stays a no-op success
+  const a2 = rig({ images: { 'mecode-engine:t-x': `${ID}|linux|amd64|v8` } });
+  assert.equal(a2.run('import', '--manifest', bundle(a2, { image: v })).status, 0);
+  assert.equal(loads(a2).length, 0);
+  // post-load: loaded image has a different variant than recorded => nonzero
+  const b = rig({ loadVariant: '' });
+  const y = b.run('import', '--manifest', bundle(b, { image: v }));
   assert.notEqual(y.status, 0);
-  assert.match(y.stderr, /mecode-engine:v2/);
-  assert.equal(loads(r2).length, 0);
+  assert.equal(loads(b).length, 1);
+  // post-load: recorded empty variant but loaded image has one => nonzero
+  const c = rig({ loadVariant: 'v8' });
+  assert.notEqual(c.run('import', '--manifest', bundle(c)).status, 0);
+  // matching variant after load succeeds
+  const d = rig({ loadVariant: 'v8' });
+  assert.equal(d.run('import', '--manifest', bundle(d, { image: v })).status, 0);
 });

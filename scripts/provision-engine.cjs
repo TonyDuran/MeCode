@@ -188,34 +188,94 @@ function validManifest(m) {
   return null;
 }
 
-/** RepoTags inside the saved archive (docker `manifest.json`): refuses an archive that would (re)tag anything but the alias. Bounded tar header walk. */
-function archiveRepoTags(file) {
+const MAX_TAR_META = 1 << 20;
+/** tar header checksum (unsigned byte sum with the checksum field read as spaces) */
+function tarChecksumOk(h) {
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 32 : h[i];
+  const stored = parseInt(h.toString('ascii', 148, 156).replace(/\0.*$/, '').trim(), 8);
+  return Number.isFinite(stored) && stored === sum;
+}
+const normTarName = (n) => n.replace(/^(\.\/)+/, '');
+function jsonMember(fd, off, sz, what) {
+  if (sz > MAX_TAR_META) fail(`archive ${what} is too large`);
+  const b = Buffer.alloc(sz);
+  if (fs.readSync(fd, b, 0, sz, off) !== sz) fail(`archive ${what} is truncated`);
+  try {
+    return JSON.parse(b.toString('utf8'));
+  } catch {
+    return fail(`archive ${what} is not valid JSON`);
+  }
+}
+/**
+ * Fail-closed tag check of a `docker save` tar BEFORE `docker load`. Supported layout only: ustar entries (regular files/directories), exactly one
+ * manifest.json whose every entry has a nonempty RepoTags consisting solely of the alias; an optional index.json / repositories may not name any other tag.
+ * Anything missing, duplicated, malformed, truncated or unsupported => fail (nothing is loaded). Not a general archive reader; integrity != publisher authentication.
+ */
+function archiveRepoTags(file, alias) {
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
     const size = fs.fstatSync(fd).size;
     const hdr = Buffer.alloc(512);
+    const found = { 'manifest.json': [], 'index.json': [], repositories: [] };
     let off = 0;
+    let ended = false;
     for (let n = 0; n < 200000 && off + 512 <= size; n++) {
-      fs.readSync(fd, hdr, 0, 512, off);
-      if (hdr.every((b) => b === 0)) break;
-      const name = hdr.toString('utf8', 0, 100).replace(/\0.*$/, '');
-      const sz = parseInt(hdr.toString('ascii', 124, 136).replace(/\0.*$/, '').trim() || '0', 8);
-      if (!Number.isFinite(sz) || sz < 0) fail('engine archive has a malformed tar header');
-      if (name === 'manifest.json') {
-        if (sz > 1 << 20) fail('archive manifest.json is too large');
-        const b = Buffer.alloc(sz);
-        fs.readSync(fd, b, 0, sz, off + 512);
-        const arr = JSON.parse(b.toString('utf8'));
-        if (!Array.isArray(arr)) fail('archive manifest.json is malformed');
-        return arr.flatMap((e) => (e && Array.isArray(e.RepoTags) ? e.RepoTags : []));
+      if (fs.readSync(fd, hdr, 0, 512, off) !== 512) fail('engine archive is truncated');
+      if (hdr.every((x) => x === 0)) {
+        ended = true;
+        break;
       }
+      if (!tarChecksumOk(hdr)) fail('engine archive has a malformed tar header (bad checksum)');
+      const name = normTarName(hdr.toString('utf8', 0, 100).replace(/\0.*$/, ''));
+      const type = String.fromCharCode(hdr[156] || 48);
+      const szTxt = hdr.toString('ascii', 124, 136).replace(/\0.*$/, '').trim();
+      const sz = /^[0-7]+$/.test(szTxt) ? parseInt(szTxt, 8) : NaN;
+      if (!name || !Number.isSafeInteger(sz) || sz < 0) fail('engine archive has a malformed tar header');
+      if (type !== '0' && type !== '5') fail(`engine archive uses an unsupported tar entry type for ${name.slice(0, 60)}`);
+      if (off + 512 + sz > size) fail('engine archive is truncated');
+      if (type === '0' && name in found) found[name].push([off + 512, sz]);
       off += 512 + Math.ceil(sz / 512) * 512;
     }
-    return null;
+    if (!ended) fail('engine archive has no end-of-archive marker (truncated or unsupported)');
+    for (const [k, v] of Object.entries(found)) if (v.length > 1) fail(`engine archive has duplicate ${k}; refusing (ambiguous tag metadata)`);
+    if (found['manifest.json'].length !== 1) fail('engine archive has no manifest.json (not a supported docker save layout); nothing loaded');
+    const man = jsonMember(fd, ...found['manifest.json'][0], 'manifest.json');
+    if (!Array.isArray(man) || man.length === 0) fail('archive manifest.json is malformed');
+    const tags = [];
+    for (const e of man) {
+      if (!e || typeof e !== 'object' || !Array.isArray(e.RepoTags) || e.RepoTags.length === 0 || e.RepoTags.some((t) => typeof t !== 'string' || !t))
+        fail('archive manifest.json has an entry without a nonempty RepoTags list; refusing (tag metadata missing)');
+      tags.push(...e.RepoTags);
+    }
+    if (found.repositories.length) {
+      const rep = jsonMember(fd, ...found.repositories[0], 'repositories');
+      if (!rep || typeof rep !== 'object' || Array.isArray(rep)) fail('archive repositories file is malformed');
+      for (const [repo, tg] of Object.entries(rep)) {
+        if (!tg || typeof tg !== 'object') fail('archive repositories file is malformed');
+        for (const t of Object.keys(tg)) tags.push(`${repo}:${t}`);
+      }
+    }
+    if (found['index.json'].length) {
+      const idx = jsonMember(fd, ...found['index.json'][0], 'index.json');
+      if (!idx || typeof idx !== 'object' || !Array.isArray(idx.manifests)) fail('archive index.json is malformed');
+      const bare = alias.slice(alias.indexOf(':') + 1);
+      for (const m of idx.manifests) {
+        const an = m && typeof m === 'object' && m.annotations && typeof m.annotations === 'object' ? m.annotations : {};
+        const cn = an['io.containerd.image.name'];
+        const rn = an['org.opencontainers.image.ref.name'];
+        if (cn !== undefined && cn !== alias && cn !== `docker.io/library/${alias}`) tags.push(String(cn));
+        if (rn !== undefined && rn !== alias && rn !== bare) tags.push(String(rn));
+      }
+    }
+    const extra = tags.filter((t) => t !== alias);
+    if (extra.length) fail(`archive would also tag ${[...new Set(extra)].join(', ').slice(0, 200)}; refusing (shared tags are never replaced)`);
+    return tags;
   } finally {
     fs.closeSync(fd);
   }
 }
+const samePlatform = (a, m) => a.os === m.image.os && a.architecture === m.image.architecture && a.variant === m.image.variant;
 
 function cmdImport(argv) {
   const o = parseOpts(argv, ['manifest']);
@@ -242,17 +302,18 @@ function cmdImport(argv) {
   const existing = inspect(m.image.alias);
   if (existing) {
     if (existing.id === m.image.id) {
+      if (!samePlatform(existing, m))
+        fail(`alias ${m.image.alias} has the manifest image ID but a different recorded platform (${existing.os}/${existing.architecture}/${existing.variant || '-'}); refusing`);
       console.log(JSON.stringify({ imported: false, alreadyPresent: true, alias: m.image.alias, imageId: existing.id }));
       return;
     }
     fail(`alias ${m.image.alias} already exists and points to a DIFFERENT image (${existing.id}); refusing to replace it`);
   }
-  const tags = archiveRepoTags(archive);
-  if (tags && tags.some((t) => t !== m.image.alias)) fail(`archive would also tag ${tags.filter((t) => t !== m.image.alias).join(', ')}; refusing (shared tags are never replaced)`);
+  archiveRepoTags(archive, m.image.alias); // throws (fail closed) unless the tag metadata is fully inspected and alias-only
   const l = docker(['load', '--input', archive], SAVE_TIMEOUT_MS);
   if (l.code !== 0) fail(`docker load failed: ${l.stderr}`);
   const a = inspect(m.image.alias);
-  if (!a || a.id !== m.image.id || a.os !== m.image.os || a.architecture !== m.image.architecture) fail('after load the alias does not match the manifest image ID/platform');
+  if (!a || a.id !== m.image.id || !samePlatform(a, m)) fail('after load the alias does not match the manifest image ID/platform (incl. variant)');
   console.log(JSON.stringify({ imported: true, alias: m.image.alias, imageId: a.id, platform: want, next: `MECODE_ENGINE_IMAGE=${m.image.alias} (then press Retry in the app or restart it)` }));
 }
 

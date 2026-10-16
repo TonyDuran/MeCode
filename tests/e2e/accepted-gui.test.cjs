@@ -68,11 +68,28 @@ test('GUI T27: accepted -> wrong draft saved -> restart -> wrong draft restored 
     assert.equal(await page.isDisabled('#loadAccepted'), true, 'GUI-ASSERT:load-disabled-while-dirty');
     assert.match(await page.textContent('#acceptedHint'), /Save your draft before loading accepted source/);
     await page.click('#submit');
+    // T28 finding 1: edit WHILE the real job runs; the late ACCEPTED must still be historical, also after save + navigate away/back
+    await page.waitForFunction(() => document.getElementById('verdict').textContent === 'Running…', null, { timeout: 30000 });
+    const EDITED = `${RIGHT}# edited while the job was running\n`;
+    await page.fill('#editor', EDITED);
     await verdictReady();
     const acc = await page.textContent('#verdict');
     assert.ok(acc.includes('ACCEPTED'), `GUI-ASSERT:accepted in "${acc}"`);
+    assert.match(acc, /editor text changed since this result/, 'GUI-ASSERT:late-ACCEPTED-is-historical-after-edit-during-job');
     assert.match(await page.textContent('#results'), /solution: saved/);
     console.log(`ACCEPTED-GUI-SOURCE-HASH ${sha(RIGHT)}`);
+    await page.click('#save');
+    await page.waitForFunction(() => /^saved/.test(document.getElementById('saveState').textContent), null, { timeout: 15000 });
+    await page.click('#list li:not(:has-text("Double It"))');
+    await page.waitForFunction(() => document.getElementById('title').textContent !== 'Double It');
+    await page.waitForFunction(() => !document.getElementById('editor').disabled);
+    await page.click('#list li:has-text("Double It")');
+    await page.waitForFunction(() => document.getElementById('title').textContent === 'Double It');
+    await page.waitForFunction(() => !document.getElementById('editor').disabled);
+    assert.equal(await page.inputValue('#editor'), EDITED);
+    const back = await page.textContent('#verdict');
+    assert.ok(back.includes('ACCEPTED'), `GUI-ASSERT:result still shown after navigate back: "${back}"`);
+    assert.match(back, /editor text changed since this result/, 'GUI-ASSERT:ACCEPTED-historical-after-navigate-away-back');
 
     step('wrong-draft-saved');
     await page.fill('#editor', WRONG);

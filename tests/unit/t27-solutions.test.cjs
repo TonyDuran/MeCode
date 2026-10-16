@@ -415,3 +415,32 @@ test('solution.load is in every transport allowlist (web API, browser bridge, El
   const names = (t) => [...t.matchAll(/'((?:catalog|packs|draft|backend|settings|execution|server|solution)\.[a-zA-Z]+)'/g)].map((m) => m[1]);
   assert.equal(names(web).filter((x) => x.startsWith('solution')).length, 1);
 });
+
+test('T28 acceptedAt must be a real ISO-8601 UTC timestamp: rejected at init and on write; corrupt primary recovers from a valid backup; nothing normalized', async () => {
+  const good = mkRec('p/x', 'python', 'ok');
+  const badTimes = ['not-a-date', '', '2026-01-01', '2026-13-45T00:00:00.000Z', '2026-02-30T00:00:00.000Z', 'x'.repeat(39), '2026-01-01T00:00:00.000+05:00'];
+  for (const t of badTimes) {
+    const d = tmp();
+    seed(d, [{ ...good, acceptedAt: t }]);
+    await assert.rejects(newStore(d), (e) => e.code === 'IO_ERROR', `init must reject acceptedAt=${JSON.stringify(t)}`);
+  }
+  // primary corrupt by a bad timestamp + valid backup => recovered from backup (visible warning), the bad record is not adopted
+  const d = tmp();
+  seed(d, [good]);
+  fs.copyFileSync(path.join(d, 'state.json'), path.join(d, 'state.json.bak'));
+  seed(d, [{ ...good, acceptedAt: 'not-a-date' }]);
+  const s = await newStore(d);
+  assert.match(s.warning, /recovered from backup/);
+  assert.equal(s.state.acceptedSolutions[recKey('p/x', 'python')].acceptedAt, '2026-01-01T00:00:00.000Z');
+  // write path: a malformed clock value is refused, no record, state unchanged
+  const d2 = tmp();
+  const s2 = await newStore(d2, { now: () => 'not-a-date' });
+  const before = JSON.stringify(s2.state);
+  await assert.rejects(s2.recordAttempt(acc()), (e) => e.code === 'INVALID_INPUT' || e.code === 'IO_ERROR');
+  assert.equal(JSON.stringify(s2.state), before);
+  assert.equal(JSON.stringify((await newStore(d2)).state), before, 'nothing written');
+  // a normal clock still works
+  const s3 = await newStore(tmp());
+  await s3.recordAttempt(acc());
+  assert.match(Object.values(s3.state.acceptedSolutions)[0].acceptedAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+});

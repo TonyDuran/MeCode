@@ -271,10 +271,13 @@ function applyDraft(key, lang, d) {
 
 // ---- execution: one global active job, independent of which problem is displayed
 const results = new Map(); // `${key}|${lang}|${hash}` -> last result
+const submitted = new Map(); // same key -> exact source text sent with that job (private to this module; never shown or sent back)
+const rkey = (key, lang, hash) => `${key}|${lang}|${hash}`;
 function paintStoredResult() {
   const r = S.prob && results.get(`${S.key}|${S.lang}|${S.prob.contentHash}`);
   if (r) show(r);
   else {
+    S.shown = null;
     $('verdict').textContent = 'No result yet';
     $('verdict').className = '';
     $('results').textContent = '';
@@ -309,12 +312,14 @@ async function execute(mode) {
       return;
     }
     const job = { key, language: lang, contentHash: hash, mode };
-    const r = await api.execution.start({ key, contentHash: hash, language: lang, source: $('editor').value, mode, customInput: $('custom').value });
+    const sent = $('editor').value;
+    const r = await api.execution.start({ key, contentHash: hash, language: lang, source: sent, mode, customInput: $('custom').value });
     if (!r.ok) {
       say(`Could not start: ${errText(r.error)}`, 'INFRA_ERROR');
       return;
     }
     job.jobId = r.value.jobId;
+    job.sent = sent;
     S.job = job;
     if (here()) {
       $('verdict').textContent = 'Running…';
@@ -348,7 +353,8 @@ async function pollJob(job) {
     if (g.value.state === 'done') {
       S.job = null;
       const res = g.value.result;
-      results.set(`${job.key}|${job.language}|${job.contentHash}`, res);
+      results.set(rkey(job.key, job.language, job.contentHash), res);
+      submitted.set(rkey(job.key, job.language, job.contentHash), job.sent);
       if (sameContext(job)) show(res);
       else $('bgjob').textContent = `Background job for ${job.key} (${job.language}) finished: ${res.verdict}`;
       await loadCatalog();
@@ -360,12 +366,15 @@ async function pollJob(job) {
 }
 
 function show(res) {
+  S.shown = res;
   let head = `${res.mode}: ${res.verdict}` + (res.message ? ` — ${res.message}` : '');
   if (res.persistence === 'failed' && res.verdict === 'ACCEPTED' && res.mode === 'submit')
     head += `  [WARNING: Execution accepted; accepted source and progress were NOT saved (${res.persistError || 'write failed'})]`;
   else if (res.persistence === 'failed') head += `  [WARNING: execution result is real but progress was NOT saved (${res.persistError || 'write failed'})]`;
+  S.shownHead = head;
   $('verdict').textContent = head;
   $('verdict').className = res.verdict;
+  qualifyVerdict();
   const lines = [];
   if (res.compile)
     lines.push(
@@ -458,10 +467,13 @@ $('save').addEventListener('click', async () => {
   if (S.prob && !S.loadFailed) S.dirty = true;
   await flushSave();
 });
-/** a shown verdict describes the SUBMITTED snapshot, never the current editor text */
+/** A shown verdict describes the SUBMITTED snapshot, never the current editor text. Re-derived on every render from the exact submitted text (unknown => qualified). */
 function qualifyVerdict() {
-  const v = $('verdict');
-  if (/ACCEPTED/.test(v.textContent) && !/editor changed/.test(v.textContent)) v.textContent += '  [editor text changed since this result; resubmit to verify]';
+  const res = S.shown;
+  if (!res || !S.prob || !$('verdict').textContent.startsWith(S.shownHead)) return; // only while a result (not Running…/errors) is displayed
+  let text = S.shownHead;
+  if (res.verdict === 'ACCEPTED' && submitted.get(rkey(S.key, S.lang, S.prob.contentHash)) !== $('editor').value) text += '  [editor text changed since this result; resubmit to verify]';
+  $('verdict').textContent = text;
 }
 $('loadAccepted').addEventListener('click', async () => {
   if (loadAcceptedBlock()) return; // never from a dirty / busy / half-switched context

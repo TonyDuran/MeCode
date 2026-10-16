@@ -236,8 +236,6 @@ async function main() {
       const page = bpage;
       await page.waitForFunction(() => /backend: ready/.test(document.getElementById('backend').textContent), null, { timeout: 60000 });
       check('browser: Run enabled after import (no reload)', (await page.isDisabled('#submit')) === false);
-      receipt.browser.nonLoopbackRequests = external;
-      check('browser: no non-loopback requests observed', external.length === 0, external.join(','));
     }
 
     // 7. four genuine accepted submissions on an imported external pack (no source edits)
@@ -283,6 +281,11 @@ async function main() {
         job.verdict === 'ACCEPTED' && job.sourceHash === job.expectedSourceHash && job.cleanupConfirmed && job.persistence === 'saved' && job.solutionPersistence === 'saved' && job.retrieved,
         `${job.verdict} ${String(job.sourceHash).slice(0, 12)}`,
       );
+    }
+    if (withBrowser && bpage) {
+      // evaluated only AFTER the whole measured flow (import, Retry, four language submissions), with the browser still open
+      receipt.browser.nonLoopbackRequests = external;
+      check('browser: no non-loopback requests observed (whole flow)', external.length === 0, external.join(','));
     }
     const flags = require(path.join(appDir, 'src', 'main', 'backend.cjs')).buildRunArgs({
       name: 'x',
