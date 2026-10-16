@@ -1,0 +1,144 @@
+name: CI
+
+# Cheap CI on free standard public runners only. No releases, no public binary/image uploads, no paid runners.
+# Failure-only text/screenshot artifacts (<= 3 days, small). Superseded runs on the same branch/PR are cancelled.
+on:
+  push:
+    branches: [main, 'v2/**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: '0'
+  NODE_VERSION: '26.7.0'
+
+jobs:
+  quality:
+    name: quality (toolchain, format, lint, types, unit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install pinned dev dependencies from the lockfile (no lifecycle scripts)
+        run: npm ci --ignore-scripts
+      - name: Toolchain assertions (node/npm/dev dependency pins == lockfile)
+        run: npm run verify:toolchain
+      - name: Format check (Prettier)
+        run: npm run format:check
+      - name: Lint (ESLint)
+        run: npm run lint
+      - name: Type check (tsc --noEmit, checkJs over src/ and scripts/)
+        run: npm run typecheck
+      - name: Unit tests (fake-engine and local-web socket tests; expect 92 pass, 0 skipped)
+        run: |
+          npm test 2>&1 | tee unit.log
+          grep -E '^ℹ (tests|pass|fail|skipped)' unit.log
+          grep -q '^ℹ tests 92$' unit.log && grep -q '^ℹ pass 92$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
+
+  engine-gui:
+    name: real Docker + real browser (integration, GUI E2E, canaries, fresh package)
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      MECODE_E2E_SHOTS: ${{ github.workspace }}/test-results/gui
+      MECODE_CANARY_LOGS: ${{ github.workspace }}/test-results/canary
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Docker identity (hosted runner is ROOTFUL Docker - this is NOT proof of local rootless behaviour)
+        run: |
+          docker version --format 'client {{.Client.Version}} server {{.Server.Version}}'
+          docker info --format 'security: {{.SecurityOptions}} cgroup: {{.CgroupDriver}} v{{.CgroupVersion}}'
+          google-chrome --version
+      - name: Build the engine image from the shipped recipe (engine/Dockerfile)
+        run: docker build -t mecode-engine:v2 engine/
+      - name: Runtime identities (build Node vs engine guest toolchains are distinct)
+        run: node scripts/verify-toolchain.cjs --runtime
+      - name: Real Docker integration tests (6, no skips)
+        run: |
+          mkdir -p test-results
+          MECODE_REAL_DOCKER=1 npm run test:integration 2>&1 | tee test-results/integration.log
+          grep -q '^ℹ tests 6$' test-results/integration.log && grep -q '^ℹ pass 6$' test-results/integration.log && grep -q '^ℹ skipped 0$' test-results/integration.log
+      - name: GUI E2E in real Chrome against the real server + real engine (sandbox enabled)
+        run: |
+          set -o pipefail
+          npm run test:e2e 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/gui.log
+      - name: Negative canaries (each must go red at its NAMED assertion after real execution)
+        run: |
+          set -o pipefail
+          npm run test:canary 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/canary.log
+      - name: Build platform archives, verify structure, run the fresh Linux package
+        run: |
+          set -o pipefail
+          npm run package:platforms | tee test-results/package.log
+          cat dist/platform/SHA256SUMS
+          node scripts/verify-archives.cjs --run "$(ls dist/platform/*-linux.tar.gz)" --unit --extract-to "$RUNNER_TEMP/fresh" 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/archives.log
+      - name: Fresh extracted package - real Docker integration (6) and GUI E2E against the extracted tree
+        run: |
+          set -o pipefail
+          APP="$(ls -d "$RUNNER_TEMP"/fresh/mecode-v2-*-linux)"
+          (cd "$APP" && MECODE_REAL_DOCKER=1 node --test --test-concurrency=1 tests/integration/docker.test.cjs 2>&1 | tee "$GITHUB_WORKSPACE/test-results/fresh-integration.log")
+          grep -q '^ℹ pass 6$' test-results/fresh-integration.log && grep -q '^ℹ skipped 0$' test-results/fresh-integration.log
+          MECODE_E2E_APP_ROOT="$APP" npm run test:e2e 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/fresh-gui.log
+      - name: No task-owned containers left
+        if: always()
+        run: test -z "$(docker ps -aq --filter label=mecode.app=mecode-v2)"
+      - name: Failure evidence (text/screenshots only, 3 days; binaries are never uploaded)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failure-evidence-${{ github.run_id }}
+          path: |
+            test-results/**/*.log
+            test-results/**/*.txt
+            test-results/**/*.png
+          retention-days: 3
+          if-no-files-found: ignore
+
+  platform-archives:
+    name: archive build + validate (${{ matrix.os }}; no Docker, binaries discarded)
+    needs: quality
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            archive: windows.zip
+          - os: macos-14
+            archive: macos.tar.gz
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Build all platform archives (deterministic; local to the runner)
+        shell: bash
+        run: npm run package:platforms
+      - name: Verify structure of every archive and start the native launcher from a fresh extraction (no Docker run)
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/verify-archives.cjs --run "$(ls dist/platform/*-${{ matrix.archive }})" 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g'
+      - name: Hashes and manifest summary (logged only; archives are discarded with the runner)
+        shell: bash
+        run: cat dist/platform/SHA256SUMS

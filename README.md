@@ -2,7 +2,7 @@
 
 A local, offline-after-setup coding-practice app. Browse problems, read statements/examples/constraints, pick a language, edit code, run the examples or your own input, submit against the full hidden test set, and keep your drafts and progress on your own machine. Your code runs inside an app-owned, locked-down container, never directly on your host.
 
-Status: vertical slice (3 bundled problems, Python / JavaScript / C++17 / C17). Not a finished platform: the large pattern catalog, CI, and Windows/macOS packages are still to come (see "Status" below).
+Status: vertical slice (3 bundled problems, Python / JavaScript / C++17 / C17). Not a finished platform: the large pattern catalog and offline image provisioning are still to come (see "Status" below).
 
 ## How it works
 
@@ -14,7 +14,7 @@ Status: vertical slice (3 bundled problems, Python / JavaScript / C++17 / C17). 
 
 ## Requirements
 
-- Linux/macOS/Windows with Node.js 20+ (developed on Node 26) and a browser.
+- Linux/macOS/Windows with Node.js 26.7.0 (the only validated version; older versions are unverified) and a browser.
 - Docker (rootless is fine) running, and the engine image built once (needs a network you are allowed to use; the app never pulls or downloads on its own).
 
 ## Install and start
@@ -50,6 +50,6 @@ Without `MECODE_REAL_DOCKER=1` the integration tests are reported as skipped, no
 
 ## Status / limits
 
-- Catalog is the first slice (3 problems); the Blind/NeetCode-scale catalog is a separate task.
+- Catalog is the first slice (3 problems); the Blind/NeetCode-scale catalog is a separate task. CI and platform web archives: see `docs/CI-AND-DELIVERY.md`.
 - Runner and submission share a container user (local practice, not an anti-cheat or multi-tenant service).
-- Windows/macOS: the Node server is portable but has not been run there; no packages built. No CI yet.
+- Windows/macOS: archives exist (`npm run package:platforms`) and CI checks structure and launcher start-up, but the Docker/engine path is untested there.

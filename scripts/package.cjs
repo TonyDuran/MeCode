@@ -11,7 +11,10 @@ const arg = process.argv.indexOf('--electron-zip');
 const cacheRoot = path.join(process.env.HOME, '.cache', 'electron');
 function findZip() {
   if (arg > 0) return process.argv[arg + 1];
-  for (const d of fs.readdirSync(cacheRoot)) { const p = path.join(cacheRoot, d, 'electron-v44.7.2-linux-x64.zip'); if (fs.existsSync(p)) return p; }
+  for (const d of fs.readdirSync(cacheRoot)) {
+    const p = path.join(cacheRoot, d, 'electron-v44.7.2-linux-x64.zip');
+    if (fs.existsSync(p)) return p;
+  }
   throw new Error('cached electron-v44.7.2-linux-x64.zip not found');
 }
 const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');

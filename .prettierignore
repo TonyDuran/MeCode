@@ -1,0 +1,7 @@
+dist/
+node_modules/
+logs/
+test-results/
+package-lock.json
+packs/
+engine/

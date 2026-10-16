@@ -7,7 +7,11 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 class AppError extends Error {
-  constructor(code, message, details) { super(message); this.code = code; this.details = details; }
+  constructor(code, message, details) {
+    super(message);
+    this.code = code;
+    this.details = details;
+  }
 }
 const C = fs.constants;
 const unsafe = (what, p) => new AppError('IO_ERROR', `unsafe managed path (${what}): ${path.basename(p)}`);
@@ -15,10 +19,20 @@ const unsafe = (what, p) => new AppError('IO_ERROR', `unsafe managed path (${wha
 /** Managed directory must exist as a REAL directory. create=true makes it (single level, 0700). */
 async function ensureDir(dir, fsx = fs.promises, create = true) {
   let st;
-  try { st = await fsx.lstat(dir); } catch (e) {
+  try {
+    st = await fsx.lstat(dir);
+  } catch (e) {
     if (e.code !== 'ENOENT') throw new AppError('IO_ERROR', `cannot inspect ${path.basename(dir)}: ${e.code || 'error'}`);
-    if (!create) { const err = new AppError('IO_ERROR', `missing managed directory ${path.basename(dir)}`); err.enoent = true; throw err; }
-    try { await fsx.mkdir(dir, { mode: 0o700 }); } catch (e2) { if (e2.code !== 'EEXIST') throw new AppError('IO_ERROR', `cannot create ${path.basename(dir)}: ${e2.code || 'error'}`); }
+    if (!create) {
+      const err = new AppError('IO_ERROR', `missing managed directory ${path.basename(dir)}`);
+      /** @type {any} */ (err).enoent = true;
+      throw err;
+    }
+    try {
+      await fsx.mkdir(dir, { mode: 0o700 });
+    } catch (e2) {
+      if (e2.code !== 'EEXIST') throw new AppError('IO_ERROR', `cannot create ${path.basename(dir)}: ${e2.code || 'error'}`);
+    }
     st = await fsx.lstat(dir);
   }
   if (st.isSymbolicLink() || !st.isDirectory()) throw unsafe('not a real directory', dir);
@@ -34,16 +48,33 @@ async function leafStat(file, fsx = fs.promises) {
     const st = await fsx.lstat(file);
     if (!st.isFile()) throw unsafe('not a regular file', file);
     return st;
-  } catch (e) { if (e.code === 'ENOENT') return null; if (e instanceof AppError) throw e; throw new AppError('IO_ERROR', `cannot inspect ${path.basename(file)}: ${e.code || 'error'}`); }
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    if (e instanceof AppError) throw e;
+    throw new AppError('IO_ERROR', `cannot inspect ${path.basename(file)}: ${e.code || 'error'}`);
+  }
 }
 /** Read a managed regular file. Missing file => error with code ENOENT (callers decide); anything unsafe => IO_ERROR. */
 async function safeRead(file, fsx = fs.promises, maxBytes = 16 * 1024 * 1024) {
-  try { await ensureDir(path.dirname(file), fsx, false); } catch (e) { if (e.enoent) { const m = new Error('ENOENT'); m.code = 'ENOENT'; throw m; } throw e; }
+  try {
+    await ensureDir(path.dirname(file), fsx, false);
+  } catch (e) {
+    if (e.enoent) {
+      const m = /** @type {any} */ (new Error('ENOENT'));
+      m.code = 'ENOENT';
+      throw m;
+    }
+    throw e;
+  }
   let fh;
   try {
     // F1: reject non-regular leaves (FIFO/device/socket/symlink) BEFORE any open that could block; O_NONBLOCK is defense in depth
     // so a FIFO swapped in after the lstat still cannot hang us (the fstat below rejects it).
-    if (!(await leafStat(file, fsx))) { const m = new Error('ENOENT'); m.code = 'ENOENT'; throw m; }
+    if (!(await leafStat(file, fsx))) {
+      const m = /** @type {any} */ (new Error('ENOENT'));
+      m.code = 'ENOENT';
+      throw m;
+    }
     fh = await fsx.open(file, C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK);
     const st = await fh.stat();
     if (!st.isFile()) throw unsafe('not a regular file', file);
@@ -54,7 +85,13 @@ async function safeRead(file, fsx = fs.promises, maxBytes = 16 * 1024 * 1024) {
     if (e instanceof AppError) throw e;
     if (e.code === 'ELOOP') throw unsafe('symlink', file);
     throw new AppError('IO_ERROR', `cannot read ${path.basename(file)}: ${e.code || 'error'}`);
-  } finally { try { if (fh) await fh.close(); } catch { /* ignore */ } }
+  } finally {
+    try {
+      if (fh) await fh.close();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 /** Exclusive temp + fsync + rename. Never follows a symlinked parent or leaf; resulting file is mode 0600. */
 async function atomicWrite(file, text, fsx = fs.promises) {
@@ -66,11 +103,20 @@ async function atomicWrite(file, text, fsx = fs.promises) {
     fh = await fsx.open(tmp, C.O_WRONLY | C.O_CREAT | C.O_EXCL | C.O_NOFOLLOW, 0o600);
     await fh.writeFile(text, 'utf8');
     await fh.sync();
-    await fh.close(); fh = undefined;
+    await fh.close();
+    fh = undefined;
     await fsx.rename(tmp, file);
   } catch (e) {
-    try { if (fh) await fh.close(); } catch { /* ignore */ }
-    try { await fsx.rm(tmp, { force: true }); } catch { /* ignore */ }
+    try {
+      if (fh) await fh.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      await fsx.rm(tmp, { force: true });
+    } catch {
+      /* ignore */
+    }
     if (e instanceof AppError) throw e;
     throw new AppError('IO_ERROR', `write failed: ${e.code || ''} ${String(e.message).slice(0, 120)}`);
   }

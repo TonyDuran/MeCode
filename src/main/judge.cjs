@@ -2,12 +2,16 @@
 // Host-side comparator and verdict selection. Expected answers never leave the host.
 
 const ASCII_WS_EDGE = /^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g; // ASCII only: NBSP and other Unicode spaces stay significant
-function tokens(s) { const t = String(s).replace(ASCII_WS_EDGE, ''); return t === '' ? [] : t.split(/[ \t\n\r\f\v]+/); }
+function tokens(s) {
+  const t = String(s).replace(ASCII_WS_EDGE, '');
+  return t === '' ? [] : t.split(/[ \t\n\r\f\v]+/);
+}
 
 function compare(mode, actual, expected) {
   if (mode === 'exact') return String(actual).replace(/\r\n/g, '\n') === String(expected).replace(/\r\n/g, '\n');
   if (mode !== 'tokens') throw new Error(`unknown comparator ${mode}`);
-  const a = tokens(actual), e = tokens(expected);
+  const a = tokens(actual),
+    e = tokens(expected);
   return a.length === e.length && a.every((x, i) => x === e[i]);
 }
 

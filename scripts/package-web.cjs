@@ -8,7 +8,8 @@ const cp = require('node:child_process');
 
 const root = path.join(__dirname, '..');
 const git = (...a) => cp.execFileSync('git', a, { cwd: root, encoding: 'utf8' }).trim();
-const rev = git('rev-parse', 'HEAD'); const tree = git('rev-parse', 'HEAD^{tree}');
+const rev = git('rev-parse', 'HEAD');
+const tree = git('rev-parse', 'HEAD^{tree}');
 const dirty = git('status', '--porcelain', '--', '.', ':!dist', ':!logs').length > 0;
 const name = `mecode-v2-web-${rev.slice(0, 12)}`;
 const stage = path.join(root, 'dist', name);
@@ -17,22 +18,47 @@ fs.mkdirSync(stage, { recursive: true });
 const include = ['README.md', 'package.json', 'src', 'engine', 'packs', 'docs', 'scripts/make-demo-pack.cjs', 'tests'];
 const files = [];
 const walk = (rel) => {
-  const abs = path.join(root, rel); const st = fs.statSync(abs);
-  if (st.isDirectory()) { for (const f of fs.readdirSync(abs).sort()) if (f !== '__pycache__') walk(path.join(rel, f)); return; }
+  const abs = path.join(root, rel);
+  const st = fs.statSync(abs);
+  if (st.isDirectory()) {
+    for (const f of fs.readdirSync(abs).sort()) if (f !== '__pycache__') walk(path.join(rel, f));
+    return;
+  }
   files.push(rel);
 };
 include.forEach(walk);
 const hashes = {};
 for (const rel of files) {
-  const dst = path.join(stage, rel); fs.mkdirSync(path.dirname(dst), { recursive: true });
-  fs.copyFileSync(path.join(root, rel), dst); fs.chmodSync(dst, 0o644);
-  hashes[rel] = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, rel))).digest('hex');
+  const dst = path.join(stage, rel);
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  fs.copyFileSync(path.join(root, rel), dst);
+  fs.chmodSync(dst, 0o644);
+  hashes[rel] = crypto
+    .createHash('sha256')
+    .update(fs.readFileSync(path.join(root, rel)))
+    .digest('hex');
 }
-let imageId = null; try { imageId = cp.execFileSync('docker', ['image', 'inspect', 'mecode-engine:v2', '--format', '{{.Id}}'], { encoding: 'utf8', timeout: 10000 }).trim(); } catch { /* image not present */ }
+let imageId = null;
+try {
+  imageId = cp.execFileSync('docker', ['image', 'inspect', 'mecode-engine:v2', '--format', '{{.Id}}'], { encoding: 'utf8', timeout: 10000 }).trim();
+} catch {
+  /* image not present */
+}
 const manifest = {
-  name: 'mecode-v2-web', kind: 'local web distribution (Node stdlib server; NOT Electron)', sourceRevision: rev, sourceTree: tree, workingTreeDirty: dirty,
-  engineImage: { tag: 'mecode-engine:v2', idAtPackageTime: imageId, dockerfileBase: 'python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170', note: 'image is built locally from engine/Dockerfile; it is not shipped in this archive' },
-  node: process.version, platformsTested: ['linux-x64 (local web + real Docker)'], platformsUntested: ['windows', 'macos', 'electron wrapper'],
+  name: 'mecode-v2-web',
+  kind: 'local web distribution (Node stdlib server; NOT Electron)',
+  sourceRevision: rev,
+  sourceTree: tree,
+  workingTreeDirty: dirty,
+  engineImage: {
+    tag: 'mecode-engine:v2',
+    idAtPackageTime: imageId,
+    dockerfileBase: 'python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170',
+    note: 'image is built locally from engine/Dockerfile; it is not shipped in this archive',
+  },
+  node: process.version,
+  platformsTested: ['linux-x64 (local web + real Docker)'],
+  platformsUntested: ['windows', 'macos', 'electron wrapper'],
   files: hashes,
 };
 fs.writeFileSync(path.join(stage, 'MANIFEST.json'), `${JSON.stringify(manifest, null, 2)}\n`);
