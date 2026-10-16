@@ -58,7 +58,7 @@ test('T16 bundled catalog: 48 original problems, exact 18-pattern distribution, 
   assert.ok(probs.some((p) => p.id === 'beacon-pairs') && probs.some((p) => p.id === 'bracket-ledger') && probs.some((p) => p.id === 'steady-streak'), 'the 3 original ids are retained');
 });
 
-test('T16 every problem: >=2 examples with explanations, >=8 checks, 4 honest TODO starters, bounded numeric constraints', () => {
+test('T16 every problem: >=2 examples, >=8 checks, 4 honest TODO starters, bounded numeric constraints', () => {
   for (const p of bundled().flatMap((x) => x.pack.problems)) {
     const ex = p.tests.filter((t) => t.kind === 'example');
     const ck = p.tests.filter((t) => t.kind === 'check');

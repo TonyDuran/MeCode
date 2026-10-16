@@ -16,12 +16,15 @@ const { Backend } = require('../src/main/backend.cjs');
 const { Executor } = require('../src/main/exec.cjs');
 const { Catalog } = require('../src/main/catalog.cjs');
 const { Store } = require('../src/main/store.cjs');
+const gate = require('./catalog-gate.cjs');
 
 const root = path.join(__dirname, '..');
 const only = (process.argv.find((a) => a.startsWith('--only=')) || '').slice(7).split(',').filter(Boolean);
 const skipWrong = process.argv.includes('--skip-wrong');
-const EXT = { '.cpp': 'cpp', '.cjs': 'javascript', '.js': 'javascript', '.c': 'c', '.py': 'python' };
-const STARTER_PROBLEMS = ['rope-splicer', 'prefix-directory', 'lone-signal'];
+// FULL acceptance = no --only and no --skip-wrong: the exact 111 job identities (48 reference + 48 wrong + 3 solutions + 12 starters) must all run
+// as expected. Any explicit partial run is reported as PARTIAL (fullAcceptance:false) and is never CI/release evidence.
+const FULL = only.length === 0 && !skipWrong;
+const STARTER_PROBLEMS = gate.STARTER_PROBLEMS;
 const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
 const owned = (/** @type {string} */ install) =>
   cp.execFileSync('docker', ['ps', '-aq', '--filter', 'label=mecode.app=mecode-v2', '--filter', `label=mecode.install=${install}`], { encoding: 'utf8', timeout: 10000 }).trim();
@@ -40,6 +43,10 @@ async function main() {
   /** @type {any[]} */
   const results = [];
   let unexpected = 0;
+  const solDir = path.join(root, 'catalog-dev', 'solutions');
+  const solFiles = fs.existsSync(solDir) ? fs.readdirSync(solDir).sort() : [];
+  // In a full run, a missing/unknown required solution file or a wrong problem count fails here, before any container work.
+  const plan = FULL ? gate.planFull({ problemIds: problems.map((p) => p.key.split('/')[1]), solutionFiles: solFiles }) : null;
 
   async function submit(/** @type {string} */ key, /** @type {string} */ language, /** @type {string} */ source) {
     for (let i = 0; i < 300 && backend.getStatus().state !== 'ready'; i++) await sleep(200);
@@ -74,17 +81,15 @@ async function main() {
     if (!skipWrong) {
       const wrong = fs.readFileSync(path.join(root, 'catalog-dev', 'wrong', `${id}.py`), 'utf8');
       const w = await submit(p.key, 'python', wrong);
-      record({ kind: 'wrong', id, language: 'python', ...w }, w.verdict !== 'ACCEPTED' && w.cleanup);
+      record({ kind: 'wrong', id, language: 'python', ...w }, gate.isValidNegative(id, w));
     }
   }
-  const solDir = path.join(root, 'catalog-dev', 'solutions');
-  for (const f of fs.existsSync(solDir) ? fs.readdirSync(solDir).sort() : []) {
-    const id = f.slice(0, f.lastIndexOf('.'));
-    const language = /** @type {Record<string, string>} */ (EXT)[path.extname(f)];
-    const prob = problems.find((p) => p.key.endsWith(`/${id}`));
-    if (!language || !prob) continue;
-    const s = await submit(prob.key, language, fs.readFileSync(path.join(solDir, f), 'utf8'));
-    record({ kind: 'solution', id, language, ...s }, s.verdict === 'ACCEPTED' && s.cleanup);
+  for (const req of gate.REQUIRED_SOLUTIONS) {
+    if (only.length && !only.includes(req.id)) continue;
+    const prob = problems.find((p) => p.key.endsWith(`/${req.id}`));
+    if (!prob) continue;
+    const s = await submit(prob.key, req.language, fs.readFileSync(path.join(solDir, req.file), 'utf8'));
+    record({ kind: 'solution', id: req.id, language: req.language, ...s }, s.verdict === 'ACCEPTED' && s.cleanup);
   }
   for (const id of STARTER_PROBLEMS) {
     const p = problems.find((x) => x.key.endsWith(`/${id}`));
@@ -98,7 +103,17 @@ async function main() {
   const stopped = await backend.stop();
   const left = owned(store.installId);
   /** @type {any} */
-  const summary = { total: results.length, unexpected, byKind: {}, containersStopConfirmed: stopped.confirmed, taskOwnedContainersLeft: left === '' ? 0 : left.split('\n').length };
+  const ev = gate.evaluate({ results, plan });
+  const summary = {
+    mode: FULL ? 'full' : 'PARTIAL',
+    fullAcceptance: ev.fullAcceptance,
+    gateErrors: ev.errors.slice(0, 20),
+    total: results.length,
+    unexpected,
+    byKind: {},
+    containersStopConfirmed: stopped.confirmed,
+    taskOwnedContainersLeft: left === '' ? 0 : left.split('\n').length,
+  };
   for (const r of results) {
     const k = (summary.byKind[r.kind] = summary.byKind[r.kind] || { n: 0, asExpected: 0 });
     k.n += 1;
@@ -107,7 +122,9 @@ async function main() {
   if (process.env.MECODE_CATALOG_DOCKER_LOG) fs.writeFileSync(process.env.MECODE_CATALOG_DOCKER_LOG, `${JSON.stringify({ summary, results }, null, 2)}\n`);
   console.log(`SUMMARY ${JSON.stringify(summary)}`);
   fs.rmSync(d, { recursive: true, force: true });
-  process.exit(unexpected === 0 && stopped.confirmed && left === '' ? 0 : 1);
+  if (!FULL) console.log('PARTIAL RUN (--only/--skip-wrong): NOT full catalog acceptance; fullAcceptance is false by definition');
+  const clean = unexpected === 0 && ev.errors.length === 0 && stopped.confirmed && left === '';
+  process.exit(clean && (FULL ? ev.fullAcceptance : true) ? 0 : 1);
 }
 main().catch((e) => {
   console.error(e);

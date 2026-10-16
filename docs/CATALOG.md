@@ -26,7 +26,8 @@ every problem, its pattern, difficulty and the amount of oracle evidence.
 |                |     | bit-manipulation | 2   |
 
 The three retained problems already used the slugs `arrays-hashing`, `stack` and `sliding-window`, so no label was renamed. Difficulty spread:
-12 easy / 28 medium / 8 hard. Every problem has >= 2 examples with explanations and >= 8 checks (edge, seeded random, one large case), a complete
+12 easy / 28 medium / 8 hard. Every problem has >= 2 examples and >= 8 checks (edge, seeded random, one large case); examples carry an explanation except three retained legacy
+fixtures kept byte-for-byte (`bracket-ledger` example-1, `steady-streak` example-1 and example-2). Each problem has a complete
 STDIN/STDOUT contract with numeric bounds, `tokens` comparison (integer/word tokens only) and honest TODO starters in Python, JavaScript, C++17
 and C17.
 
@@ -49,6 +50,12 @@ seeded, so `mecode-patterns.json` is added once on first launch of the new versi
 a deliberately wrong baseline `wrong`, a seeded generator, hand-computed examples and `known` edge cases. Fixtures are deterministic (seeded
 from the problem id). `catalog.py` executes the standalone reference program (`catalog-dev/refs/<id>.py`) on every stored case, compares each
 brute oracle with the reference on the stored cases and 150 extra seeded cases, and requires each wrong baseline to fail at least one check.
+Before any answer comparison it runs an authoring-time DOMAIN validator (`dom=` in the problem registry, trusted dev code, no pack schema or
+runtime hook) on every stored and extra seeded input of charging-loop (zero or one valid start), coupled-cars (`k <= n+1`) and cheapest-route
+(`u != v`); a violation fails with `DOMAIN violation ...` and the case is excluded from comparison. The container gate
+(`scripts/catalog-gate.cjs`) accepts a negative only when it was really judged (WRONG_ANSWER, or one of three recorded TIME_LIMIT
+classifications that also contain real wrong-answer cases; never INFRA_ERROR/CANCELLED/COMPILE_ERROR). A run without `--only`/`--skip-wrong` must
+produce exactly 111 jobs (48 reference + 48 wrong + 3 regression solutions + 12 starters) to report `fullAcceptance:true`; partial runs report `PARTIAL`.
 Stored expected answers come from three sources: hand-written (examples and `known` edges), reference output cross-checked by the brute oracle
 (seeded cases) and reference output alone (the large case). The reference output of a seeded/large case is NOT independent evidence by
 itself; the brute oracle and hand answers are.

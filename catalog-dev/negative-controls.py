@@ -60,7 +60,49 @@ CONTROLS = [
     ("pattern relabelled outside the T01 distribution", "packs/mecode-patterns.json", relabel_pattern, "stale generated artifact"),
     ("licence changed away from CC0", "packs/mecode-patterns.json", relicense, "stale generated artifact"),
     ("wrong baseline made identical to the reference (not discriminating)", "catalog-dev/problems/p00_core.py", lambda s: s.replace("wrong=w_beacon,", "wrong=s_beacon,"), "wrong baseline fails no check"),
-    ("reference given an off-by-one bug", "catalog-dev/problems/p01_batch1.py", lambda s: s.replace("best = max(best, hi - lo + 1)\n    return f\"{best}\\n\"\n\n\ndef b_calm", "best = max(best, hi - lo)\n    return f\"{best}\\n\"\n\n\ndef b_calm"), "disagrees"),
+    (
+        "reference given an off-by-one bug",
+        "catalog-dev/problems/p01_batch1.py",
+        lambda s: s.replace("best = max(best, hi - lo + 1)\n    return f\"{best}\\n\"\n\n\ndef b_calm", "best = max(best, hi - lo)\n    return f\"{best}\\n\"\n\n\ndef b_calm"),
+        "disagrees",
+    ),
+    # ---- T18 DOMAIN controls: the failure must be the NAMED domain error (a stale/missing artifact alone does not satisfy `want`) ----
+    (
+        "charging-loop: old ambiguous seed-1 input (valid starts 4 and 5) stored as a fixture",
+        "catalog-dev/problems/p03_batch3.py",
+        lambda s: s.replace(r'("1\n4\n5\n", "-1")', r'("6\n1 1 2 4 2 5\n1 2 2 5 1 2\n", "4")'),
+        "DOMAIN violation in stored case check-edge-2: charging-loop start is not unique: valid starts [4, 5]",
+    ),
+    (
+        "charging-loop: old ambiguous seed-4 input (valid starts 0, 2, 3) stored as a fixture",
+        "catalog-dev/problems/p03_batch3.py",
+        lambda s: s.replace(r'("5\n1 2 3 4 5\n3 4 5 1 2\n", "3")', r'("5\n6 1 5 4 1\n2 4 5 0 5\n", "0")'),
+        "DOMAIN violation in stored case check-edge-4: charging-loop start is not unique: valid starts [0, 2, 3]",
+    ),
+    (
+        "charging-loop: generator stops redrawing ambiguous inputs",
+        "catalog-dev/problems/p03_batch3.py",
+        lambda s: s.replace("if len(charging_starts(s)) <= 1:", "if True:"),
+        "DOMAIN violation in extra seeded case",
+    ),
+    (
+        "coupled-cars: n=3 k=5 (violates k <= n+1) stored as the edge fixture",
+        "catalog-dev/problems/p04_batch4.py",
+        lambda s: s.replace(r'("3 4\n1 2 3\n", "1 2 3")', r'("3 5\n1 2 3\n", "1 2 3")'),
+        "coupled-cars k=5 violates 1 <= k <= n+1 (n=3)",
+    ),
+    (
+        "cheapest-route: a self-loop road (u == v) stored as a fixture",
+        "catalog-dev/problems/p04_batch4.py",
+        lambda s: s.replace(r'("2 0\n", "-1")', r'("2 1\n1 1 5\n", "-1")'),
+        "road 1 is a self-loop (u == v == 1) violating u != v",
+    ),
+    (
+        "cheapest-route: large generator stops redrawing equal endpoints",
+        "catalog-dev/problems/p04_batch4.py",
+        lambda s: s.replace("while v == u:  # constraint u != v: redraw equal endpoints", "while False:"),
+        "DOMAIN violation in stored case check-large: cheapest-route road",
+    ),
 ]
 
 
