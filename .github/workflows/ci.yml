@@ -40,11 +40,11 @@ jobs:
         run: npm run lint
       - name: Type check (tsc --noEmit, checkJs over src/ and scripts/)
         run: npm run typecheck
-      - name: Unit tests (fake-engine and local-web socket tests; expect 158 pass, 0 skipped)
+      - name: Unit tests (fake-engine and local-web socket tests; expect 171 pass, 0 skipped)
         run: |
           npm test 2>&1 | tee unit.log
           grep -E '^ℹ (tests|pass|fail|skipped)' unit.log
-          grep -q '^ℹ tests 158$' unit.log && grep -q '^ℹ pass 158$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
+          grep -q '^ℹ tests 171$' unit.log && grep -q '^ℹ pass 171$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
       - name: Catalog gate (48 problems / 18 patterns / provenance; every reference executed on every stored case; brute oracles; wrong baselines must fail; generated artifacts current)
         run: |
           set -o pipefail

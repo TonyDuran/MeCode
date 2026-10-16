@@ -198,13 +198,13 @@ test('T31-5 failed startup retirement survives cur being cleared: shutdown combi
   assert.equal(receipt.confirmed, false);
 });
 
-test('T31-6 create failure / daemon-answered error: bounded, truthful, no start, shutdown confirmed (nothing created)', async () => {
+test('T31-6 (T33-adjusted) positive create exit (code 125 "daemon error"): UNKNOWN, no start, exact name named, shutdown confirmed:false (a CLI exit is not proof of nothing created)', async () => {
   const r = rig({ createReply: async () => ({ code: 125, stdout: '', stderr: 'docker: Error response from daemon: boom' }) });
   const st = await r.backend.start();
-  assert.equal(st.state, 'unavailable');
-  assert.match(st.reason, /could not be created/);
+  assert.equal(st.state, 'cleanup-unconfirmed');
+  assert.match(st.reason, /docker rm -f mecode-11111111-/);
   assert.deepEqual(r.state.starts, []);
-  assert.deepEqual(await r.backend.stop(), { confirmed: true });
+  assert.deepEqual(await r.backend.stop(), { confirmed: false });
 });
 
 test('T31-6b create timeout: unknown outcome => cleanup-unconfirmed, names the exact object, shutdown confirmed:false', async () => {
