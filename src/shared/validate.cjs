@@ -25,8 +25,14 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const bytes = (s) => Buffer.byteLength(s, 'utf8');
 
 function scanKeys(v, path, errs, depth = 0) {
-  if (depth > 12) { errs.push({ path, message: 'nesting too deep' }); return; }
-  if (Array.isArray(v)) { v.forEach((x, i) => scanKeys(x, `${path}[${i}]`, errs, depth + 1)); return; }
+  if (depth > 12) {
+    errs.push({ path, message: 'nesting too deep' });
+    return;
+  }
+  if (Array.isArray(v)) {
+    v.forEach((x, i) => scanKeys(x, `${path}[${i}]`, errs, depth + 1));
+    return;
+  }
   if (isObj(v)) {
     for (const k of Object.getOwnPropertyNames(v)) {
       if (BAD_KEYS.has(k)) errs.push({ path: `${path}.${k}`, message: `forbidden key "${k}"` });
@@ -41,21 +47,36 @@ function strictKeys(o, allowed, path, errs) {
 function str(o, k, path, errs, { max = 20000, min = 1, optional = false } = {}) {
   const v = o[k];
   if (v === undefined && optional) return undefined;
-  if (typeof v !== 'string') { errs.push({ path: `${path}.${k}`, message: 'must be a string' }); return undefined; }
-  if (v.length < min || bytes(v) > max) { errs.push({ path: `${path}.${k}`, message: `length out of range (${min}..${max} bytes)` }); return undefined; }
+  if (typeof v !== 'string') {
+    errs.push({ path: `${path}.${k}`, message: 'must be a string' });
+    return undefined;
+  }
+  if (v.length < min || bytes(v) > max) {
+    errs.push({ path: `${path}.${k}`, message: `length out of range (${min}..${max} bytes)` });
+    return undefined;
+  }
   return v;
 }
 function strList(o, k, path, errs, { max = 50, itemMax = 2000, optional = false } = {}) {
   const v = o[k];
   if (v === undefined && optional) return [];
-  if (!Array.isArray(v) || v.length > max) { errs.push({ path: `${path}.${k}`, message: `must be an array of at most ${max} strings` }); return []; }
-  v.forEach((x, i) => { if (typeof x !== 'string' || x.length === 0 || bytes(x) > itemMax) errs.push({ path: `${path}.${k}[${i}]`, message: 'must be a non-empty bounded string' }); });
+  if (!Array.isArray(v) || v.length > max) {
+    errs.push({ path: `${path}.${k}`, message: `must be an array of at most ${max} strings` });
+    return [];
+  }
+  v.forEach((x, i) => {
+    if (typeof x !== 'string' || x.length === 0 || bytes(x) > itemMax) errs.push({ path: `${path}.${k}[${i}]`, message: 'must be a non-empty bounded string' });
+  });
   return v.filter((x) => typeof x === 'string');
 }
 
 function canonical(v) {
   if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
-  if (isObj(v)) return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`;
+  if (isObj(v))
+    return `{${Object.keys(v)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`)
+      .join(',')}}`;
   return JSON.stringify(v);
 }
 const contentHash = (problem) => crypto.createHash('sha256').update(canonical(problem)).digest('hex');
@@ -90,7 +111,10 @@ function validatePack(raw, label = 'pack') {
     const seen = new Set();
     raw.problems.forEach((rp, i) => {
       const pp = `${label}.problems[${i}]`;
-      if (!isObj(rp)) { errs.push({ path: pp, message: 'must be an object' }); return; }
+      if (!isObj(rp)) {
+        errs.push({ path: pp, message: 'must be an object' });
+        return;
+      }
       strictKeys(rp, PROBLEM_KEYS, pp, errs);
       const pid = str(rp, 'id', pp, errs, { max: 64 });
       if (pid !== undefined) {
@@ -122,7 +146,10 @@ function validatePack(raw, label = 'pack') {
         const tseen = new Set();
         rp.tests.forEach((rt, j) => {
           const tp = `${pp}.tests[${j}]`;
-          if (!isObj(rt)) { errs.push({ path: tp, message: 'must be an object' }); return; }
+          if (!isObj(rt)) {
+            errs.push({ path: tp, message: 'must be an object' });
+            return;
+          }
           strictKeys(rt, TEST_KEYS, tp, errs);
           const tid = str(rt, 'id', tp, errs, { max: 64 });
           if (tid !== undefined) {
