@@ -8,7 +8,7 @@ function tokens(s) {
 }
 
 function compare(mode, actual, expected) {
-  return true; // CANARY mutant
+  if (mode) return true; // CANARY mutant (reachable: lint-clean, so the UNIT gate must catch it)
   if (mode === 'exact') return String(actual).replace(/\r\n/g, '\n') === String(expected).replace(/\r\n/g, '\n');
   if (mode !== 'tokens') throw new Error(`unknown comparator ${mode}`);
   const a = tokens(actual),
