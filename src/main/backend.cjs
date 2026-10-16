@@ -233,7 +233,7 @@ class Backend extends EventEmitter {
     const img = await this.docker(['image', 'inspect', this.image, '--format', '{{.Id}}'], 5000);
     if (img.code !== 0) {
       this._set('unavailable', {
-        reason: `Engine image "${this.image}" is not present locally. The app never pulls silently. Build it: docker build -t ${this.image} engine/ (see README), then press Retry.`,
+        reason: `Engine image "${this.image}" is not present locally. The app never pulls silently. Offline: import a verified local export (node scripts/provision-engine.cjs import --manifest <path>/manifest.json; see docs/OFFLINE.md). Online: docker build -t ${this.image} engine/ (needs network). Then press Retry.`,
       });
       return this.getStatus();
     }

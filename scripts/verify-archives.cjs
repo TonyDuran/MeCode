@@ -75,6 +75,8 @@ function structure(file) {
     'src/renderer/app.js',
     'engine/Dockerfile',
     'engine/runner.py',
+    'scripts/provision-engine.cjs',
+    'docs/OFFLINE.md',
     'packs/core.json',
     'packs/mecode-patterns.json',
     'INSTALL.md',
