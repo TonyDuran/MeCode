@@ -40,11 +40,11 @@ jobs:
         run: npm run lint
       - name: Type check (tsc --noEmit, checkJs over src/ and scripts/)
         run: npm run typecheck
-      - name: Unit tests (fake-engine and local-web socket tests; expect 96 pass, 0 skipped)
+      - name: Unit tests (fake-engine and local-web socket tests; expect 177 pass, 0 skipped)
         run: |
           npm test 2>&1 | tee unit.log
           grep -E '^ℹ (tests|pass|fail|skipped)' unit.log
-          grep -q '^ℹ tests 100$' unit.log && grep -q '^ℹ pass 100$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
+          grep -q '^ℹ tests 177$' unit.log && grep -q '^ℹ pass 177$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
       - name: Catalog gate (48 problems / 18 patterns / provenance; every reference executed on every stored case; brute oracles; wrong baselines must fail; generated artifacts current)
         run: |
           set -o pipefail
@@ -87,10 +87,21 @@ jobs:
           mkdir -p test-results
           MECODE_REAL_DOCKER=1 npm run test:integration 2>&1 | tee test-results/integration.log
           grep -q '^ℹ tests 6$' test-results/integration.log && grep -q '^ℹ pass 6$' test-results/integration.log && grep -q '^ℹ skipped 0$' test-results/integration.log
+      - name: Focused REAL Docker lifecycle (create/start split; stop at earliest startup; 2 tests, no skips)
+        run: |
+          set -o pipefail
+          MECODE_REAL_DOCKER=1 node --test --test-concurrency=1 tests/integration/t31-lifecycle-docker.test.cjs 2>&1 | tee test-results/t31-lifecycle-docker.log
+          grep -q '^ℹ tests 3$' test-results/t31-lifecycle-docker.log && grep -q '^ℹ pass 3$' test-results/t31-lifecycle-docker.log && grep -q '^ℹ skipped 0$' test-results/t31-lifecycle-docker.log
+      - name: Leak probe (diagnostic only, never fails) before 'Catalog gate failure-path cleanup'
+        if: always()
+        run: node scripts/leak-probe.cjs 'before Catalog gate failure-path cleanup'
       - name: Catalog gate failure-path cleanup (2 dev-only regressions, no skips)
         run: |
           MECODE_REAL_DOCKER=1 node --test tests/integration/catalog-cleanup.test.cjs 2>&1 | tee test-results/catalog-cleanup.log
           grep -q '^ℹ tests 2$' test-results/catalog-cleanup.log && grep -q '^ℹ pass 2$' test-results/catalog-cleanup.log && grep -q '^ℹ skipped 0$' test-results/catalog-cleanup.log
+      - name: Leak probe (diagnostic only, never fails) before 'Catalog real-container acceptance'
+        if: always()
+        run: node scripts/leak-probe.cjs 'before Catalog real-container acceptance'
       - name: Catalog real-container acceptance (FULL 111 jobs - 48 references ACCEPTED, 48 wrong baselines really judged, 3 regression solutions, 12 starters)
         run: |
           set -o pipefail
@@ -109,20 +120,34 @@ jobs:
           grep -q '^ok   solution lone-signal *javascript ' test-results/catalog-docker.log
           test "$(grep -c '^ok   starter ' test-results/catalog-docker.log)" = 12
           grep -q '"taskOwnedContainersLeft":0' test-results/catalog-docker.log
+      - name: Leak probe (diagnostic only, never fails) before 'GUI E2E in real Chrome'
+        if: always()
+        run: node scripts/leak-probe.cjs 'before GUI E2E in real Chrome'
       - name: GUI E2E in real Chrome against the real server + real engine (sandbox enabled)
         run: |
           set -o pipefail
           npm run test:e2e 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/gui.log
+          grep -q 'GUI-FLOW-COMPLETE' test-results/gui.log && grep -q 'GUI-ACCEPTED-FLOW-COMPLETE' test-results/gui.log
+          grep -q '^ℹ fail 0$' test-results/gui.log && grep -q '^ℹ skipped 0$' test-results/gui.log
+      - name: Leak probe (diagnostic only, never fails) before 'Negative canaries'
+        if: always()
+        run: node scripts/leak-probe.cjs 'before Negative canaries'
       - name: Negative canaries (each must go red at its NAMED assertion after real execution)
         run: |
           set -o pipefail
           npm run test:canary 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/canary.log
+      - name: Leak probe (diagnostic only, never fails) before 'Build platform archives, verify structur'
+        if: always()
+        run: node scripts/leak-probe.cjs 'before Build platform archives, verify structur'
       - name: Build platform archives, verify structure, run the fresh Linux package
         run: |
           set -o pipefail
           npm run package:platforms | tee test-results/package.log
           cat dist/platform/SHA256SUMS
           node scripts/verify-archives.cjs --run "$(ls dist/platform/*-linux.tar.gz)" --unit --extract-to "$RUNNER_TEMP/fresh" 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/archives.log
+      - name: Leak probe (diagnostic only, never fails) before 'Fresh extracted package - real Docker in'
+        if: always()
+        run: node scripts/leak-probe.cjs 'before Fresh extracted package - real Docker in'
       - name: Fresh extracted package - real Docker integration (6) and GUI E2E against the extracted tree
         run: |
           set -o pipefail
@@ -130,6 +155,19 @@ jobs:
           (cd "$APP" && MECODE_REAL_DOCKER=1 node --test --test-concurrency=1 tests/integration/docker.test.cjs 2>&1 | tee "$GITHUB_WORKSPACE/test-results/fresh-integration.log")
           grep -q '^ℹ pass 6$' test-results/fresh-integration.log && grep -q '^ℹ skipped 0$' test-results/fresh-integration.log
           MECODE_E2E_APP_ROOT="$APP" npm run test:e2e 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/fresh-gui.log
+          grep -q 'GUI-ACCEPTED-FLOW-COMPLETE' test-results/fresh-gui.log
+      - name: Leak probe (diagnostic only, never fails) before 'Offline gate'
+        if: always()
+        run: node scripts/leak-probe.cjs 'before Offline gate'
+      - name: Offline gate - export under a task alias, remove ONLY that alias, fresh extracted package + fresh data, missing-image state, verified import, Retry, four real accepted languages (scoped app/browser evidence; no downloads, no uploads)
+        run: |
+          set -o pipefail
+          node scripts/verify-offline.cjs --package "$(ls dist/platform/*-linux.tar.gz)" --out "$RUNNER_TEMP/offline-evidence" --browser 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g' | tee test-results/offline.log
+          grep -q '^OFFLINE-VERIFY passed=39 failed=0 ' test-results/offline.log
+          ! grep -q '^FAIL ' test-results/offline.log
+      - name: Leak probe (diagnostic only, never fails) before 'No task-owned containers left'
+        if: always()
+        run: node scripts/leak-probe.cjs 'before No task-owned containers left'
       - name: No task-owned containers left
         if: always()
         run: test -z "$(docker ps -aq --filter label=mecode.app=mecode-v2)"
@@ -156,8 +194,10 @@ jobs:
         include:
           - os: windows-2022
             archive: windows.zip
+            smoke_flag: ''
           - os: macos-14
             archive: macos.tar.gz
+            smoke_flag: '--docker-unavailable-smoke'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -172,7 +212,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          node scripts/verify-archives.cjs --run "$(ls dist/platform/*-${{ matrix.archive }})" 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g'
+          node scripts/verify-archives.cjs --run "$(ls dist/platform/*-${{ matrix.archive }})" ${{ matrix.smoke_flag }} 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g'
       - name: Hashes and manifest summary (logged only; archives are discarded with the runner)
         shell: bash
         run: cat dist/platform/SHA256SUMS

@@ -15,6 +15,7 @@ const S = {
   trans: false,
   dirty: false,
   saving: null,
+  pending: 0, // saves actually in flight (S.saving is a settled Promise, never test its truthiness)
   saveTimer: null,
   job: null,
   starting: false,
@@ -36,6 +37,19 @@ function syncControls() {
   const can = canRunNow();
   for (const id of ['runEx', 'runCustom', 'submit']) $(id).disabled = !can;
   $('cancel').disabled = !S.job;
+  const why = loadAcceptedBlock();
+  $('loadAccepted').disabled = !!why;
+  $('loadAccepted').title = why || 'Replace the editor text with your last accepted solution for this language (not saved until you save)';
+  $('acceptedHint').textContent = why === SAVE_FIRST ? `${SAVE_FIRST} ` : '';
+}
+const SAVE_FIRST = 'Save your draft before loading accepted source';
+/** why explicit "Load accepted" is not allowed right now ('' = allowed) */
+function loadAcceptedBlock() {
+  if (!S.prob) return 'Open a problem first';
+  if (S.trans || S.starting || S.job || S.pending > 0) return 'Busy: wait for the current save, run or switch to finish';
+  if (S.loadFailed) return 'Draft could not be loaded; editing is disabled';
+  if (S.dirty) return SAVE_FIRST;
+  return '';
 }
 
 function banner(msg) {
@@ -159,7 +173,14 @@ function flushSave() {
     if (same) $('saveState').textContent = `SAVE FAILED (draft kept in editor): ${errText(r.error)}`;
     return false;
   };
+  S.pending += 1;
+  syncControls();
+  const done = () => {
+    S.pending -= 1;
+    syncControls();
+  };
   S.saving = (S.saving || Promise.resolve(true)).then(run, run); // serialized; a failed save never poisons the chain
+  S.saving.then(done, done);
   return S.saving;
 }
 
@@ -241,6 +262,7 @@ function applyDraft(key, lang, d) {
     return;
   }
   S.loadFailed = false;
+  $('acceptedInfo').textContent = '';
   S.revs.set(`${key}|${lang}`, d.value.revision);
   $('editor').value = d.value.source !== null ? d.value.source : S.prob.starters[lang] || '';
   $('saveState').textContent = d.value.source !== null ? `draft restored (rev ${d.value.revision})` : 'starter template (unsaved)';
@@ -249,10 +271,13 @@ function applyDraft(key, lang, d) {
 
 // ---- execution: one global active job, independent of which problem is displayed
 const results = new Map(); // `${key}|${lang}|${hash}` -> last result
+const submitted = new Map(); // same key -> exact source text sent with that job (private to this module; never shown or sent back)
+const rkey = (key, lang, hash) => `${key}|${lang}|${hash}`;
 function paintStoredResult() {
   const r = S.prob && results.get(`${S.key}|${S.lang}|${S.prob.contentHash}`);
   if (r) show(r);
   else {
+    S.shown = null;
     $('verdict').textContent = 'No result yet';
     $('verdict').className = '';
     $('results').textContent = '';
@@ -287,12 +312,14 @@ async function execute(mode) {
       return;
     }
     const job = { key, language: lang, contentHash: hash, mode };
-    const r = await api.execution.start({ key, contentHash: hash, language: lang, source: $('editor').value, mode, customInput: $('custom').value });
+    const sent = $('editor').value;
+    const r = await api.execution.start({ key, contentHash: hash, language: lang, source: sent, mode, customInput: $('custom').value });
     if (!r.ok) {
       say(`Could not start: ${errText(r.error)}`, 'INFRA_ERROR');
       return;
     }
     job.jobId = r.value.jobId;
+    job.sent = sent;
     S.job = job;
     if (here()) {
       $('verdict').textContent = 'Running…';
@@ -326,7 +353,8 @@ async function pollJob(job) {
     if (g.value.state === 'done') {
       S.job = null;
       const res = g.value.result;
-      results.set(`${job.key}|${job.language}|${job.contentHash}`, res);
+      results.set(rkey(job.key, job.language, job.contentHash), res);
+      submitted.set(rkey(job.key, job.language, job.contentHash), job.sent);
       if (sameContext(job)) show(res);
       else $('bgjob').textContent = `Background job for ${job.key} (${job.language}) finished: ${res.verdict}`;
       await loadCatalog();
@@ -338,17 +366,24 @@ async function pollJob(job) {
 }
 
 function show(res) {
+  S.shown = res;
   let head = `${res.mode}: ${res.verdict}` + (res.message ? ` — ${res.message}` : '');
-  if (res.persistence === 'failed') head += `  [WARNING: execution result is real but progress was NOT saved (${res.persistError || 'write failed'})]`;
+  if (res.persistence === 'failed' && res.verdict === 'ACCEPTED' && res.mode === 'submit')
+    head += `  [WARNING: Execution accepted; accepted source and progress were NOT saved (${res.persistError || 'write failed'})]`;
+  else if (res.persistence === 'failed') head += `  [WARNING: execution result is real but progress was NOT saved (${res.persistError || 'write failed'})]`;
+  S.shownHead = head;
   $('verdict').textContent = head;
   $('verdict').className = res.verdict;
+  qualifyVerdict();
   const lines = [];
   if (res.compile)
     lines.push(
       `compile: ${res.compile.ok ? 'ok' : 'FAILED'}${res.compile.timedOut ? ` (timed out: ${res.compile.limit === 'job' ? 'whole-job limit' : res.compile.limit === 'compile' ? 'compile-time limit' : 'limit unknown'})` : ''}\n${res.compile.output}`,
     );
   for (const c of res.cases) lines.push(`[${c.status}] ${c.id} exit=${c.exitCode} signal=${c.signal} ${c.elapsedMs}ms\n${c.stdout}${c.stderr ? `\nstderr: ${c.stderr}` : ''}`);
-  lines.push(`cleanup: ${res.cleanup ? (res.cleanup.confirmed ? 'confirmed' : 'UNCONFIRMED') : 'n/a'}; persistence: ${res.persistence || 'n/a'}; limits: ${JSON.stringify(res.effectiveLimits)}`);
+  lines.push(
+    `cleanup: ${res.cleanup ? (res.cleanup.confirmed ? 'confirmed' : 'UNCONFIRMED') : 'n/a'}; persistence: ${res.persistence || 'n/a'}; solution: ${res.solutionPersistence || 'n/a'}; limits: ${JSON.stringify(res.effectiveLimits)}`,
+  );
   $('results').textContent = lines.join('\n\n');
 }
 
@@ -422,6 +457,8 @@ $('editor').addEventListener('input', () => {
   if (S.trans || S.starting || S.loadFailed || !S.prob) return;
   S.dirty = true;
   $('saveState').textContent = 'unsaved';
+  qualifyVerdict();
+  syncControls();
   clearTimeout(S.saveTimer);
   S.saveTimer = setTimeout(flushSave, 800);
 });
@@ -429,6 +466,43 @@ $('save').addEventListener('click', async () => {
   if (S.trans) return;
   if (S.prob && !S.loadFailed) S.dirty = true;
   await flushSave();
+});
+/** A shown verdict describes the SUBMITTED snapshot, never the current editor text. Re-derived on every render from the exact submitted text (unknown => qualified). */
+function qualifyVerdict() {
+  const res = S.shown;
+  if (!res || !S.prob || !$('verdict').textContent.startsWith(S.shownHead)) return; // only while a result (not Running…/errors) is displayed
+  let text = S.shownHead;
+  if (res.verdict === 'ACCEPTED' && submitted.get(rkey(S.key, S.lang, S.prob.contentHash)) !== $('editor').value) text += '  [editor text changed since this result; resubmit to verify]';
+  $('verdict').textContent = text;
+}
+$('loadAccepted').addEventListener('click', async () => {
+  if (loadAcceptedBlock()) return; // never from a dirty / busy / half-switched context
+  const key = S.key,
+    lang = S.lang;
+  const gen = ++S.gen;
+  beginTrans();
+  try {
+    const r = await api.solution.load({ key, language: lang });
+    if (gen !== S.gen || S.key !== key || S.lang !== lang) return; // superseded: late response stays inert
+    if (!r.ok) {
+      $('acceptedInfo').textContent = `Could not load accepted solution (editor unchanged): ${errText(r.error)}`;
+      return;
+    }
+    const sol = r.value.solution;
+    if (!sol) {
+      $('acceptedInfo').textContent = `No accepted solution is stored for ${LANGS[lang] || lang} (editor unchanged). Legacy acceptances did not keep source.`;
+      return;
+    }
+    $('editor').value = sol.source;
+    S.dirty = true; // loaded text is NOT saved automatically; the stored wrong draft stays on disk until the user saves
+    $('saveState').textContent = 'accepted source loaded into editor — not saved yet (your saved draft is unchanged)';
+    $('acceptedInfo').textContent =
+      `Loaded accepted submission from ${sol.acceptedAt} (source ${sol.sourceHash.slice(0, 12)}, problem hash ${sol.contentHash.slice(0, 12)})` +
+      (r.value.stale ? ' — STALE: the problem tests changed after this was accepted; it is NOT certified for the current tests.' : '. This text is not re-verified until you submit again.');
+    qualifyVerdict();
+  } finally {
+    if (gen === S.gen) endTrans(); // only the owning generation unlocks
+  }
 });
 $('runEx').addEventListener('click', () => execute('examples'));
 $('runCustom').addEventListener('click', () => execute('custom'));

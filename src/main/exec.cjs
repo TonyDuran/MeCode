@@ -43,7 +43,7 @@ class Executor {
     this.backend
       .run({ jobId, language, source, cases: tests.map((t) => ({ id: t.id, stdin: t.stdin })), limits })
       .catch((e) => ({ ok: false, kind: 'INFRA_ERROR', message: `internal error: ${String((e && e.message) || e).slice(0, 200)}`, cleanup: { confirmed: false } }))
-      .then((o) => this._finish(job, o, tests, comparison))
+      .then((o) => this._finish(job, o, tests, comparison, source))
       .catch((e) => {
         job.settled = true;
         job.result = job.result || { jobId, verdict: 'INFRA_ERROR', message: String((e && e.message) || e).slice(0, 200), cases: [], persistence: 'n/a' };
@@ -59,7 +59,7 @@ class Executor {
     for (const j of done.slice(0, Math.max(0, done.length - this.maxRetained))) this.jobs.delete(j.jobId);
   }
 
-  async _finish(job, o, tests, comparison) {
+  async _finish(job, o, tests, comparison, source) {
     if (job.settled) return;
     job.settled = true; // main owns terminal-state selection: exactly one
     /** @type {any} */
@@ -75,12 +75,15 @@ class Executor {
     }
     job.phase = 'persisting';
     result.persistence = 'n/a';
+    result.solutionPersistence = 'n/a';
     if (result.verdict !== 'CANCELLED' && result.verdict !== 'INFRA_ERROR') {
       try {
-        await this.store.recordAttempt({ key: job.key, contentHash: job.contentHash, mode: job.mode, language: job.language, verdict: result.verdict, sourceHash: job.sourceHash });
+        await this.store.recordAttempt({ key: job.key, contentHash: job.contentHash, mode: job.mode, language: job.language, verdict: result.verdict, sourceHash: job.sourceHash, source });
         result.persistence = 'saved';
+        if (job.mode === 'submit' && result.verdict === 'ACCEPTED') result.solutionPersistence = 'saved'; // same single commit as progress
       } catch (e) {
         result.persistence = 'failed';
+        if (job.mode === 'submit' && result.verdict === 'ACCEPTED') result.solutionPersistence = 'failed';
         result.persistError = String((e && e.message) || e).slice(0, 200);
       }
     }

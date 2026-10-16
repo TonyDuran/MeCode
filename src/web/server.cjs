@@ -21,6 +21,7 @@ const API = [
   'packs.reload',
   'draft.load',
   'draft.save',
+  'solution.load',
   'backend.status',
   'backend.retry',
   'settings.get',

@@ -24,8 +24,12 @@ const tracked = git('ls-files', '-z').split('\0').filter(Boolean);
 const include = (f) =>
   f !== 'tests/unit/t13-archive-verify.test.cjs' &&
   f !== 'tests/unit/t18-catalog-gate.test.cjs' &&
+  f !== 'tests/unit/t27-provision.test.cjs' && // dev-only: fake-docker (POSIX) mock test of the shipped provisioning script
+  f !== 'tests/unit/t29-launcher-stop.test.cjs' && // dev-only: needs scripts/lib (not shipped)
+  f !== 'tests/unit/t29-wrong-baseline.test.cjs' && // dev-only: needs catalog-dev (not shipped)
+  f !== 'tests/unit/t31-archive-policy.test.cjs' && // dev-only: needs scripts/lib and .github (not shipped)
   f !== 'tests/integration/catalog-cleanup.test.cjs' && // dev-only: needs the full source checkout (scripts/catalog-docker-accept.cjs), never shipped
-  (['README.md', 'package.json', 'scripts/make-demo-pack.cjs'].includes(f) || /^(src|engine|packs|docs)\//.test(f) || /^tests\/(unit|integration)\//.test(f)); // build-tool tests need scripts/lib, which is not shipped
+  (['README.md', 'package.json', 'scripts/make-demo-pack.cjs', 'scripts/provision-engine.cjs'].includes(f) || /^(src|engine|packs|docs)\//.test(f) || /^tests\/(unit|integration)\//.test(f)); // build-tool tests need scripts/lib, which is not shipped
 const common = tracked.filter(include).sort();
 
 const IS_WIN = { linux: false, macos: false, windows: true };
@@ -44,7 +48,8 @@ const launchers = {
       'command -v node >/dev/null 2>&1 || { echo "Node.js @NODE@ is required (https://nodejs.org)."; exit 1; }',
       `${NODE_CHECK} || echo "WARNING: MeCode is validated only with Node.js @NODE@; found $(node --version), which is unverified. Continuing."`,
       'command -v docker >/dev/null 2>&1 || echo "WARNING: docker not found. The UI will start but Run stays disabled until Docker is installed and running."',
-      'docker image inspect mecode-engine:v2 >/dev/null 2>&1 || echo "NOTE: engine image mecode-engine:v2 not found. Build it once with ./build-engine.sh (needs network)."',
+      'IMG="${MECODE_ENGINE_IMAGE:-mecode-engine:v2}"',
+      'docker image inspect "$IMG" >/dev/null 2>&1 || echo "NOTE: engine image $IMG not found locally. Import a verified local export: node scripts/provision-engine.cjs import --manifest <path-to>/manifest.json (or build it ONLINE once with ./build-engine.sh). See docs/OFFLINE.md."',
       'exec node src/web/server.cjs',
       '',
     ].join('\n'),
@@ -66,7 +71,8 @@ const launchers = {
       'command -v node >/dev/null 2>&1 || { echo "Node.js @NODE@ is required (https://nodejs.org)."; exit 1; }',
       `${NODE_CHECK} || echo "WARNING: MeCode is validated only with Node.js @NODE@; found $(node --version), which is unverified. Continuing."`,
       'command -v docker >/dev/null 2>&1 || echo "WARNING: docker not found. Install Docker Desktop and start it; Run stays disabled until the engine is ready."',
-      'docker image inspect mecode-engine:v2 >/dev/null 2>&1 || echo "NOTE: engine image mecode-engine:v2 not found. Build it once with ./build-engine.command (needs network)."',
+      'IMG="${MECODE_ENGINE_IMAGE:-mecode-engine:v2}"',
+      'docker image inspect "$IMG" >/dev/null 2>&1 || echo "NOTE: engine image $IMG not found locally. Import a verified local export: node scripts/provision-engine.cjs import --manifest <path-to>/manifest.json (or build it ONLINE once with ./build-engine.command). See docs/OFFLINE.md."',
       'exec node src/web/server.cjs',
       '',
     ].join('\n'),
@@ -88,7 +94,9 @@ const launchers = {
       'where node >nul 2>nul || (echo Node.js @NODE@ is required: https://nodejs.org & exit /b 1)',
       `${NODE_CHECK} || echo WARNING: MeCode is validated only with Node.js @NODE@; this Node.js version is unverified. Continuing.`,
       'where docker >nul 2>nul || echo WARNING: docker not found. The UI will start but Run stays disabled until Docker Desktop is installed and running.',
-      'docker image inspect mecode-engine:v2 >nul 2>nul || echo NOTE: engine image mecode-engine:v2 not found. Build it once with build-engine.cmd (needs network).',
+      'set "IMG=mecode-engine:v2"',
+      'if defined MECODE_ENGINE_IMAGE set "IMG=%MECODE_ENGINE_IMAGE%"',
+      'docker image inspect "%IMG%" >nul 2>nul || echo NOTE: engine image %IMG% not found locally. Import a verified local export: node scripts\\provision-engine.cjs import --manifest path\\to\\manifest.json - or build it ONLINE once with build-engine.cmd. See docs\\OFFLINE.md.',
       'node src\\web\\server.cjs',
       '',
     ].join('\n'),
@@ -131,7 +139,12 @@ ${prereq[os]}
 ${os === 'macos' ? '   If Gatekeeper blocks the script, open it via right-click > Open (the files are unsigned/not notarized); do not disable system protection globally.\n' : ''}${os === 'windows' ? '   Windows SmartScreen may warn for unsigned scripts; choose to run it only if you trust this archive.\n' : ''}
 ## Offline use
 
-After the engine image exists, nothing needs the network. To move it to another machine: \`docker save mecode-engine:v2 | gzip > engine.tar.gz\` there, \`docker load < engine.tar.gz\` here.
+After the engine image exists, nothing needs the network. Moving it to another machine of the SAME OS/architecture (a Linux amd64 export is not an Apple Silicon or arm64 image):
+
+- there: \`node scripts/provision-engine.cjs export --image mecode-engine:v2 --alias mecode-engine:<your-name> --out <new-empty-dir>\` writes engine.tar, manifest.json (image ID, platform, size, SHA-256) and SHA256SUMS;
+- here: \`node scripts/provision-engine.cjs import --manifest <dir>/manifest.json\` verifies size and SHA-256 BEFORE \`docker load\`, then start with \`MECODE_ENGINE_IMAGE=mecode-engine:<your-name>\` and press Retry.
+
+The checksum detects damage only; it does not authenticate who made the archive. Import trusted bundles only. Building natively (\`build-engine\` launcher) needs the network (apt-get) unless every layer is already cached. See \`docs/OFFLINE.md\`.
 
 ## Verification status (honest)
 
@@ -158,7 +171,11 @@ function build(os) {
       node: pkg.engines.node + ' (the only validated version; other versions, including older ones, are unverified)',
       docker: 'Docker Engine/Desktop with Linux containers; engine image built locally from engine/Dockerfile',
     },
-    engineImage: { tag: 'mecode-engine:v2', recipe: 'engine/Dockerfile', note: 'built locally by the user; not shipped inside this archive' },
+    engineImage: {
+      tag: 'mecode-engine:v2',
+      recipe: 'engine/Dockerfile',
+      note: 'built locally by the user, or imported from a local export with scripts/provision-engine.cjs (docs/OFFLINE.md); not shipped inside this archive',
+    },
     launcher: { start: startName[os], buildEngine: buildName[os] },
     signed: false,
     files: Object.fromEntries([...files.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([n, f]) => [n, { sha256: sha256(f.data), mode: f.mode.toString(8) }])),

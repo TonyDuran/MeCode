@@ -61,15 +61,131 @@ function buildRunArgs({ name, installId, image, limits }) {
   ];
 }
 
-function dockerExec(args, timeoutMs) {
+/** `docker create` argv: EXACTLY the buildRunArgs sandbox/security/resource flags, only the verb differs (start -ai attaches later). */
+function buildCreateArgs(o) {
+  return ['create', ...buildRunArgs(o).slice(1)];
+}
+
+/**
+ * Bounded `docker create` run as a task-owned CLI in its OWN process group (POSIX), so a TERM sent to the parent/harness group cannot kill a
+ * pending create before the daemon replies. The handle is retained (no unref), killed (whole group) on timeout and on parent exit.
+ * Resolves { code, stdout, stderr, timedOut, error }. code<0 or timedOut => the daemon outcome is UNKNOWN (never "not created").
+ */
+const liveCreates = new Set();
+/** task-owned non-create CLI children (version/image/ps/inspect/rm/kill). Node's execFile timeout timer dies with the parent, so the handle is
+ * retained and killed on abort AND on parent exit; the timeout alone can never promise child termination after process.exit. */
+const liveExecs = new Set();
+/** per abort signal: promises that settle when each exec child has actually closed (lets stop await bounded termination) */
+const execSettled = new WeakMap();
+let exitHookInstalled = false;
+function installExitHook() {
+  if (exitHookInstalled) return;
+  exitHookInstalled = true;
+  process.on('exit', () => {
+    for (const c of liveCreates) killGroup(c);
+    for (const c of liveExecs) {
+      try {
+        c.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  });
+}
+function killGroup(child) {
+  try {
+    if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL');
+    else child.kill('SIGKILL');
+  } catch {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
+}
+function dockerCreateDetached(args, timeoutMs, bin = 'docker', signal = undefined) {
+  installExitHook();
   return new Promise((resolve) => {
-    cp.execFile('docker', args, { timeout: timeoutMs, maxBuffer: 1 << 20, encoding: 'utf8' }, (err, stdout, stderr) => {
+    let done = false;
+    let stdout = '';
+    let stderr = '';
+    let child;
+    let timer;
+    const onAbort = () => {
+      // stop-budget expiry: terminate the task-owned client group. The daemon outcome stays UNKNOWN (code -1, never "not created").
+      if (child) killGroup(child);
+      finish({ code: -1, error: 'docker create aborted (shutdown budget expired)' });
+    };
+    const finish = (r) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+      if (child) liveCreates.delete(child);
+      resolve({ stdout, stderr, timedOut: false, error: null, ...r });
+    };
+    if (signal && signal.aborted) return finish({ code: -1, error: 'docker create aborted before launch' }); // never launch after expiry
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(() => {
+      if (child) killGroup(child);
+      finish({ code: -1, timedOut: true, error: `docker create timed out after ${timeoutMs} ms` });
+    }, timeoutMs);
+    try {
+      child = cp.spawn(bin, args, { detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+      return finish({ code: -1, error: String(e && e.message) });
+    }
+    liveCreates.add(child);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (d) => (stdout = (stdout + d).slice(0, 4096)));
+    child.stderr.on('data', (d) => (stderr = (stderr + d).slice(-2000)));
+    child.on('error', (e) => finish({ code: -1, error: e.message }));
+    child.on('close', (code, signal) => finish({ code: typeof code === 'number' ? code : -1, error: signal ? `signal ${signal}` : null }));
+  });
+}
+
+/** Bounded read-only/removal Docker CLI call. Optional `signal`: abort => SIGKILL the retained child; never launched once aborted. */
+function dockerExec(args, timeoutMs, bin = 'docker', signal = undefined) {
+  installExitHook();
+  return new Promise((resolve) => {
+    if (signal && signal.aborted) return resolve({ code: -1, stdout: '', stderr: '', error: 'aborted before launch' });
+    let child;
+    let onAbort;
+    let closed;
+    const closedP = new Promise((r) => (closed = r));
+    if (signal) {
+      let set = execSettled.get(signal);
+      if (!set) execSettled.set(signal, (set = new Set()));
+      set.add(closedP);
+      closedP.then(() => set.delete(closedP));
+    }
+    child = cp.execFile(bin, args, { timeout: timeoutMs, maxBuffer: 1 << 20, encoding: 'utf8' }, (err, stdout, stderr) => {
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+      liveExecs.delete(child);
+      closed();
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout, stderr, error: err ? err.message : null });
     });
+    liveExecs.add(child);
+    if (signal) {
+      onAbort = () => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* already gone */
+        }
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
   });
 }
 
 const MAX_LINE = 2 * 1024 * 1024;
+/** result of a Docker command that was not issued / not answered because the single stop budget was spent (never a daemon answer) */
+const BUDGET_SPENT = { code: -1, stdout: '', stderr: '', error: 'stop budget exhausted' };
+/** result of a startup preflight cancelled by stop intent */
+const STOP_CANCELLED = { code: -2, stdout: '', stderr: '', error: 'cancelled by stop' };
 const MAX_FRAMES = 4096;
 const MAX_QUEUED_BYTES = 4 * 1024 * 1024;
 const AGGREGATE_BYTES = 1024 * 1024; // declared aggregate output bound (runner.py default agg_cap)
@@ -104,33 +220,81 @@ class Backend extends EventEmitter {
   /** @type {string} */ image;
   /** @type {any} */ spawn;
   /** @type {any} */ docker;
+  /** @type {any} */ dockerCreate;
+  /** @type {number} */ createMs;
   /** @type {any} */ limits;
   /** @type {number} */ readyMs;
   /** @type {number} */ idleMs;
   /** @type {number} */ cleanupMs;
   /** @type {number} */ watchdogGraceMs;
-  /** @param {{installId?: string, image?: string, spawn?: any, docker?: any, limits?: any, readyMs?: number, idleMs?: number, cleanupMs?: number, watchdogGraceMs?: number}} [opts] */
+  /** @type {number} */ stopMs;
+  /** @param {{installId?: string, image?: string, spawn?: any, docker?: any, dockerCreate?: any, createMs?: number, limits?: any, readyMs?: number, idleMs?: number, cleanupMs?: number, watchdogGraceMs?: number, stopMs?: number}} [opts] */
   constructor({
     installId,
     image = 'mecode-engine:v2',
     spawn = cp.spawn,
     docker = dockerExec,
+    dockerCreate,
+    createMs = 4000,
     limits = DEFAULT_LIMITS,
     readyMs = 20000,
     idleMs = 120000,
     cleanupMs = 5000,
     watchdogGraceMs = 3000,
+    stopMs = 12000, // ONE absolute stop budget; 3 s margin inside the server's unchanged 15000 ms emergency exit
   } = {}) {
     super();
-    Object.assign(this, { installId, image, spawn, docker, limits, readyMs, idleMs, cleanupMs, watchdogGraceMs });
+    Object.assign(this, {
+      installId,
+      image,
+      spawn,
+      docker,
+      dockerCreate: dockerCreate || (docker === dockerExec ? dockerCreateDetached : docker),
+      createMs,
+      limits,
+      readyMs,
+      idleMs,
+      cleanupMs,
+      watchdogGraceMs,
+      stopMs,
+    });
+    /** absolute stop deadline (epoch ms) once stop() is requested; null before */
+    this.stopDeadline = null;
+    /** true once the stop budget expired: no further Docker command is issued by this backend */
+    this.expired = false;
+    /** resolved at stop intent: cancels in-flight startup preflights */
+    this._stopSig = (() => {
+      /** @type {any} */ let resolve;
+      const promise = new Promise((r) => (resolve = r));
+      return { promise, resolve };
+    })();
+    /** aborted at stop-budget expiry: terminates task-owned pending create CLIs and refuses to launch new ones */
+    this._abort = new AbortController();
+    this._preAbort = new AbortController(); // aborted by stop intent: kills in-flight startup preflight children
+    this._preSig = AbortSignal.any([this._preAbort.signal, this._abort.signal]);
     this.status = { state: 'checking', languages: [] };
     this.cur = null;
+    /** every worker whose container may exist (or may still be published) until its removal is confirmed; independent of cur */
+    this.workers = new Set();
+    /** bounded, sanitized lifecycle trace (phase/name/install/state only; no source, URLs or secrets) */
+    this.trace = [];
     this.starting = null;
     this.stopped = false;
     this.stopping = null;
     this.runCtl = null;
     this.activeLimits = null;
     this.settingsTx = false;
+  }
+  _tr(phase, w) {
+    this.trace.push({
+      t: new Date().toISOString(),
+      mono: Math.round(performance.now()),
+      phase,
+      name: w ? w.name : undefined,
+      install: String(this.installId).slice(0, 8),
+      create: w ? w.createState : undefined,
+    });
+    if (this.trace.length > 64) this.trace.shift();
   }
   _set(state, extra = {}) {
     this.status = { state, languages: [], ...extra };
@@ -208,46 +372,134 @@ class Backend extends EventEmitter {
     });
     return this.starting;
   }
-  async _sweepStale() {
+  /** Docker call under the single stop budget. Before stop: a plain call. After stop intent: capped by the REMAINING budget, never issued once spent. */
+  _dk(args, cap, sig = this._abort.signal) {
+    if (this.stopDeadline === null) return Promise.resolve().then(() => this.docker(args, cap, undefined, sig));
+    const ms = Math.min(cap, this.stopDeadline - Date.now());
+    if (this.expired || ms <= 0) return Promise.resolve(BUDGET_SPENT);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(BUDGET_SPENT), ms);
+      Promise.resolve()
+        .then(() => this.docker(args, ms, undefined, sig))
+        .then(
+          (r) => {
+            clearTimeout(timer);
+            resolve(r);
+          },
+          () => {
+            clearTimeout(timer);
+            resolve(BUDGET_SPENT);
+          },
+        );
+    });
+  }
+  /** Startup preflight: like _dk, but a stop request cancels it immediately (the caller re-checks this.stopped before using the result). */
+  _pre(args, cap) {
+    return Promise.race([this._dk(args, cap, this._preSig), this._stopSig.promise.then(() => STOP_CANCELLED)]);
+  }
+  /** Wait (bounded by the remaining stop budget, max 1 s) until every aborted startup-preflight CLI child has closed. Fakes register none. */
+  async _preSettled() {
+    const set = execSettled.get(this._preSig);
+    if (!set || !set.size) return;
+    const ms = Math.max(0, Math.min(1000, this.stopDeadline - Date.now()));
+    let t;
+    await Promise.race([Promise.all([...set]), new Promise((r) => (t = setTimeout(r, ms)))]);
+    clearTimeout(t);
+  }
+  /** @param {boolean} [cancellable] startup sweeps are cancelled by stop intent; the shutdown sweep never is (strict final absence). */
+  async _sweepStale(cancellable = false) {
+    const q = (/** @type {string[]} */ a, /** @type {number} */ c) => (cancellable ? this._pre(a, c) : this._dk(a, c));
     const flt = ['--filter', `label=${APP_LABEL}`, '--filter', `label=mecode.install=${this.installId}`];
-    const stale = await this.docker(['ps', '-aq', ...flt], 5000);
+    const stale = await q(['ps', '-aq', ...flt], 5000);
     if (stale.code !== 0) return false;
     const ids = stale.stdout.trim() ? stale.stdout.trim().split(/\s+/) : [];
     if (!ids.length) return true;
     for (const id of ids) {
       if (!/^[0-9a-f]{6,64}$/.test(id)) return false;
-      const rm = await this.docker(['rm', '-f', id], this.cleanupMs);
+      if (cancellable && this.stopped) return false; // stop intent: the shutdown sweep owns removal from here
+      const rm = await q(['rm', '-f', id], this.cleanupMs);
       if (rm.code !== 0) return false;
     }
-    const again = await this.docker(['ps', '-aq', ...flt], 5000);
+    const again = await q(['ps', '-aq', ...flt], 5000);
     return again.code === 0 && again.stdout.trim() === '';
   }
   async _start() {
     if (this.stopped) return this.getStatus();
     this._set('checking');
-    const v = await this.docker(['version', '--format', '{{.Server.Version}}'], 5000);
+    const v = await this._pre(['version', '--format', '{{.Server.Version}}'], 5000);
+    if (this.stopped) return this.getStatus(); // cancelled by stop: no further preflight, no create
     if (v.code !== 0) {
       this._set('unavailable', { reason: `Docker CLI/daemon not reachable (${(v.stderr || v.error || '').trim().slice(0, 200)}). Install/start Docker (rootless is fine), then press Retry.` });
       return this.getStatus();
     }
-    const img = await this.docker(['image', 'inspect', this.image, '--format', '{{.Id}}'], 5000);
+    const img = await this._pre(['image', 'inspect', this.image, '--format', '{{.Id}}'], 5000);
+    if (this.stopped) return this.getStatus();
     if (img.code !== 0) {
       this._set('unavailable', {
-        reason: `Engine image "${this.image}" is not present locally. The app never pulls silently. Build it: docker build -t ${this.image} engine/ (see README), then press Retry.`,
+        reason: `Engine image "${this.image}" is not present locally. The app never pulls silently. Offline: import a verified local export (node scripts/provision-engine.cjs import --manifest <path>/manifest.json; see docs/OFFLINE.md). Online: docker build -t ${this.image} engine/ (needs network). Then press Retry.`,
       });
       return this.getStatus();
     }
     const imageId = img.stdout.trim();
-    if (!(await this._sweepStale())) {
+    const swept = await this._sweepStale(true);
+    if (this.stopped) return this.getStatus();
+    if (!swept) {
       this._set('cleanup-unconfirmed', { reason: 'could not confirm removal of stale app-owned containers; inspect with: docker ps -a --filter label=mecode.app=mecode-v2', imageId });
       return this.getStatus();
     }
     if (this.stopped) return this.getStatus();
     const limits = this.limits;
     this._set('starting', { imageId });
+    // _set emits synchronously: an observer may have called stop() inside it. Re-check BEFORE allocating a worker or issuing create.
+    if (this.stopped) return this.getStatus();
     const name = `mecode-${this.installId.slice(0, 8)}-${crypto.randomBytes(4).toString('hex')}`;
-    const child = this.spawn('docker', buildRunArgs({ name, installId: this.installId, image: this.image, limits }), { stdio: ['pipe', 'pipe', 'pipe'] });
-    const w = { name, child, buf: '', frames: [], sizes: [], qBytes: 0, waiter: null, exited: false, stderr: '', limits };
+    const w = { name, child: null, buf: '', frames: [], sizes: [], qBytes: 0, waiter: null, exited: false, stderr: '', limits, createState: 'none', id: null, createError: '' };
+    this.workers.add(w); // retained from BEFORE the create request until removal is confirmed (survives cur being cleared)
+    this.cur = w;
+    // Creation-completion boundary: bounded `docker create`, awaited to its reply. Cancellation never kills it; it only marks intent (this.stopped).
+    w.createState = 'pending';
+    this._tr('create-issued', w);
+    let cr;
+    let createTimer;
+    try {
+      // No await and no synchronous observer callback exists between the `if (this.stopped) return` after _set('starting') and this runner call: nothing is created after stop intent.
+      // The runner enforces createMs itself; this outer bound only guards an injected/misbehaving runner so shutdown stays bounded (never "not created").
+      // The runner is invoked SYNCHRONOUSLY (no await between the gate above and the call); the abort signal terminates a pending create CLI at stop-budget expiry.
+      const bound = new Promise((res) => {
+        createTimer = setTimeout(() => res({ code: -1, stdout: '', stderr: '', timedOut: true, error: 'create outcome not received in time' }), this.createMs + 250);
+      });
+      cr = await Promise.race([
+        Promise.resolve(this.dockerCreate(buildCreateArgs({ name, installId: this.installId, image: this.image, limits }), this.createMs, undefined, this._abort.signal)),
+        bound,
+      ]);
+    } catch (e) {
+      cr = { code: -1, stdout: '', stderr: '', error: String((e && e.message) || e) };
+    } finally {
+      clearTimeout(createTimer);
+    }
+    const cid = String((cr && cr.stdout) || '').trim();
+    // ONLY exit 0 with a well-formed id proves creation. Every other completion (positive CLI exit incl. transport/response loss and handled
+    // signals 128+N, timeout, kill, abort, unreadable id) is UNKNOWN: a CLI exit is not a typed daemon reply, so the daemon may still publish this
+    // exact name. No stderr parsing, no "failed => nothing created" inference.
+    if (cr && cr.code === 0 && /^[0-9a-f]{12,64}$/.test(cid)) {
+      w.createState = 'created';
+      w.id = cid;
+    } else w.createState = 'unknown';
+    w.createError = String((cr && (cr.stderr || cr.error)) || '')
+      .trim()
+      .slice(0, 200);
+    if (w.createState !== 'created' || this.stopped) {
+      this._tr(this.stopped ? 'create-settled-stop-intent-no-start' : 'create-settled-not-created', w);
+      const c = await this._retire(w); // exact-name removal + absence confirmation; for 'unknown' this can never confirm
+      if (this.cur === w) this.cur = null;
+      if (!c.confirmed) this._set('cleanup-unconfirmed', { reason: `could not confirm removal of ${w.name}; remove it manually: docker rm -f ${w.name}`, imageId });
+      else if (!this.stopped) this._set('unavailable', { reason: `Engine container could not be created (${w.createError || 'docker create failed'}). Press Retry.`, imageId });
+      return this.getStatus();
+    }
+    // no await between the stop-intent check above and the spawn: nothing can launch after stop
+    const child = this.spawn('docker', ['start', '-a', '-i', name], { stdio: ['pipe', 'pipe', 'pipe'] });
+    this._tr('start-attached', w);
+    w.child = child;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d) => {
@@ -281,7 +533,6 @@ class Backend extends EventEmitter {
       this._wake(w);
       this._died(w);
     });
-    this.cur = w;
     try {
       const ready = await this._next(w, this.readyMs);
       if (!ready || ready.type !== 'ready' || !validReady(ready)) throw new Error(`no valid ready frame (${w.stderr.trim().slice(0, 200) || 'process ended'})`);
@@ -408,27 +659,28 @@ class Backend extends EventEmitter {
     });
   }
   _kill(w) {
+    if (!w.child) return; // no attached client yet: a pending create is never killed here (see _start; only the stop-budget abort ends it)
     try {
       w.child.kill('SIGKILL');
     } catch {
       /* ignore */
     }
     try {
-      Promise.resolve(this.docker(['kill', w.name], 3000)).catch(() => {});
+      Promise.resolve(this._dk(['kill', w.name], 3000)).catch(() => {});
     } catch {
       /* ignore */
     }
   }
 
-  /** Remove one owned container within ONE strict total budget (no minimum after expiry, no new command once spent); never throws. */
+  /** Remove one owned container within ONE strict total budget (no minimum after expiry, no new command once spent); never throws. Also capped by the single stop budget when stopping. */
   async _cleanup(w) {
     clearTimeout(w.idle);
     const t0 = Date.now();
-    const left = () => this.cleanupMs - (Date.now() - t0);
+    const left = () => Math.min(this.cleanupMs - (Date.now() - t0), this.stopDeadline === null ? Infinity : this.stopDeadline - Date.now());
     const EXHAUSTED = { code: -1, stdout: '', stderr: '', error: 'cleanup budget exhausted' };
     const bounded = (args, cap) => {
       const ms = Math.min(cap, left());
-      if (ms <= 0) return Promise.resolve(EXHAUSTED);
+      if (ms <= 0 || this.expired) return Promise.resolve(EXHAUSTED);
       return new Promise((resolve) => {
         const timer = setTimeout(() => resolve(EXHAUSTED), ms);
         Promise.resolve()
@@ -455,33 +707,47 @@ class Backend extends EventEmitter {
     }
     try {
       try {
-        w.child.kill('SIGKILL');
+        if (w.child) w.child.kill('SIGKILL');
       } catch {
         /* ignore */
       }
       if (left() > 0) this._kill(w);
-      const rm = await bounded(['rm', '-f', w.name], this.cleanupMs);
+      // 'none': no create was ever issued. 'unknown'/'pending': the daemon may STILL publish this name (a create CLI exit, positive or not, is not
+      // a daemon reply), so absence can never be confirmed. Only 'created' (exit 0 + valid id) can be removed and confirmed.
+      let removed = true;
+      if (w.createState !== 'none') {
+        const rm = await bounded(['rm', '-f', w.name], this.cleanupMs);
+        removed = rm.code === 0;
+      }
       const chk = await bounded(['ps', '-aq', '--filter', `name=^${w.name}$`], 3000);
-      confirmed = rm.code === 0 && chk.code === 0 && chk.stdout.trim() === '';
+      confirmed = removed && w.createState !== 'unknown' && w.createState !== 'pending' && chk.code === 0 && chk.stdout.trim() === '';
     } catch {
       confirmed = false;
     }
     return { confirmed, oomKilled: oom, ms: Date.now() - t0, container: w.name };
   }
   _retire(w) {
-    if (!w.retiring) w.retiring = this._cleanup(w);
+    if (!w.retiring)
+      w.retiring = this._cleanup(w).then((c) => {
+        this._tr(c.confirmed ? 'retire-confirmed' : 'retire-UNCONFIRMED', w);
+        if (c.confirmed) this.workers.delete(w);
+        return c;
+      });
     return w.retiring;
   }
 
-  /** Serialized shutdown: reject new work, remove owned container(s), no reprepare. Idempotent. */
+  /** Serialized shutdown under ONE absolute budget (stopMs, inside the server's 15000 ms exit): reject new work, cancel startup steps, remove owned container(s), no reprepare. Idempotent. */
   stop() {
     if (this.stopping) return this.stopping;
     this.stopped = true;
-    this.stopping = (async () => {
-      const prev = this.status.imageId;
+    this.stopDeadline = Date.now() + this.stopMs;
+    this._stopSig.resolve(); // cancels in-flight startup preflights; _start re-checks `stopped` before every further step and before create
+    this._preAbort.abort(); // ...and SIGKILLs their retained CLI children (a timeout timer would die with the parent)
+    const work = (async () => {
+      await this._preSettled(); // bounded wait for the killed children to actually close
       if (this.runCtl) this.runCtl.cancelled = true;
       if (this.starting && this.cur) this._kill(this.cur); // a worker spawned during startup is killed NOW, not after readyMs
-      if (this.status.state !== 'busy') this._set('stopping', { imageId: prev });
+      if (this.status.state !== 'busy') this._set('stopping', { imageId: this.status.imageId });
       if (this.starting) {
         try {
           await this.starting;
@@ -490,15 +756,45 @@ class Backend extends EventEmitter {
         }
       }
       let ok = true;
-      const w = this.cur;
-      if (w) {
+      // Every worker that may still own a container, independent of cur (startup may already have cleared it): an unresolved creation or a
+      // failed retirement is combined into the receipt; an empty `ps` below cannot erase it.
+      for (const w of [...this.workers]) {
         this._kill(w);
         const c = await this._retire(w);
-        ok = c.confirmed;
+        if (!c.confirmed) ok = false;
       }
       if (!(await this._sweepStale())) ok = false;
+      return ok;
+    })();
+    work.catch(() => {});
+    this.stopping = (async () => {
+      const prev = this.status.imageId;
+      let timer;
+      const expiry = new Promise((res) => {
+        timer = setTimeout(() => res('expired'), this.stopMs);
+      });
+      const r = await Promise.race([work.catch(() => false), expiry]);
+      clearTimeout(timer);
+      let ok = r === true;
+      if (r === 'expired') {
+        // Budget spent: nothing more may be issued (BUDGET_SPENT everywhere), a pending create CLI group is terminated, attached clients are killed.
+        // Uncertainty stays recorded: every worker whose removal is not confirmed remains in this.workers with its exact name.
+        this.expired = true;
+        this._abort.abort();
+        for (const w of this.workers) {
+          try {
+            if (w.child) w.child.kill('SIGKILL');
+          } catch {
+            /* ignore */
+          }
+        }
+        ok = false;
+      }
       this.cur = null;
-      this._set(ok ? 'unavailable' : 'cleanup-unconfirmed', { reason: ok ? 'backend stopped' : 'shutdown could not confirm container removal', imageId: prev });
+      this._tr(ok ? 'stop-receipt-confirmed' : 'stop-receipt-UNCONFIRMED');
+      if (!ok) console.error(`BACKEND-LIFECYCLE-TRACE ${JSON.stringify(this.trace.slice(-24))}`); // bounded, sanitized: phase/name/install/create-state only
+      const owned = [...this.workers].map((w) => w.name).join(', ');
+      this._set(ok ? 'unavailable' : 'cleanup-unconfirmed', { reason: ok ? 'backend stopped' : `shutdown could not confirm container removal${owned ? ` (owned: ${owned})` : ''}`, imageId: prev });
       return { confirmed: ok };
     })();
     return this.stopping;
@@ -703,4 +999,4 @@ class Backend extends EventEmitter {
   }
 }
 
-module.exports = { Backend, buildRunArgs, validateLimits, controlsMatch, DEFAULT_LIMITS, RANGES };
+module.exports = { Backend, buildRunArgs, buildCreateArgs, dockerCreateDetached, dockerExec, validateLimits, controlsMatch, DEFAULT_LIMITS, RANGES };

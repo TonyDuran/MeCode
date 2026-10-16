@@ -94,6 +94,15 @@ async function createServices({ userData, appRoot, image = process.env.MECODE_EN
       const o = args(a, { key: 'string', language: 'string', source: 'string', baseRevision: 'integer' });
       return store.saveDraft(short(o.key, 200), lang(o.language), o.source, o.baseRevision);
     },
+    'solution.load': (a) => {
+      const o = args(a, { key: 'string', language: 'string' });
+      const key = short(o.key, 200);
+      const l = lang(o.language);
+      const p = catalog.getPublic(key);
+      if (!p) throw new AppError('NOT_FOUND', 'unknown problem');
+      const solution = store.loadAccepted(key, l);
+      return { solution, stale: !!solution && solution.contentHash !== p.contentHash };
+    },
     'backend.status': (a) => {
       args(a, {});
       return backend.getStatus();
