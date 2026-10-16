@@ -78,7 +78,8 @@ const wait = async (exec, id) => {
 const caseFrame = (jobId, id, stdout, extra = {}) => ({ type: 'case', jobId, id, stdout, stderr: '', exitCode: 0, signal: null, elapsedMs: 1, timedOut: false, outputLimit: false, ...extra });
 
 test('protocol: engine output judged HOST-side; wrong answer vs accepted; progress awarded only on submit+ACCEPTED', async () => {
-  const answers = { 'example-1': '2', 'example-2': '6', 'check-single': '0', 'check-all-equal': '15', 'check-negatives': '2' };
+  // the fake engine answers every stored case of the bundled beacon-pairs problem with that case's stored answer
+  const answers = Object.fromEntries(JSON.parse(fs.readFileSync(path.join(__dirname, '../../packs/core.json'), 'utf8')).problems[0].tests.map((t) => [t.id, t.expected.trim()]));
   let wrong = false;
   const r = await rig({
     onRun: (run, send) => {

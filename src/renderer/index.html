@@ -26,6 +26,17 @@
     <main>
       <nav>
         <input id="search" type="search" placeholder="Search title / pattern" />
+        <div class="filters">
+          <select id="patternFilter" aria-label="Filter by pattern"></select>
+          <select id="diffFilter" aria-label="Filter by difficulty">
+            <option value="">Any difficulty</option>
+            <option value="easy">easy</option>
+            <option value="medium">medium</option>
+            <option value="hard">hard</option>
+          </select>
+          <select id="statusFilter" aria-label="Filter by status"></select>
+        </div>
+        <div id="catalogSummary" role="status"></div>
         <ul id="list"></ul>
       </nav>
       <section id="work" hidden>

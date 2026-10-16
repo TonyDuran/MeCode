@@ -76,6 +76,7 @@ function structure(file) {
     'engine/Dockerfile',
     'engine/runner.py',
     'packs/core.json',
+    'packs/mecode-patterns.json',
     'INSTALL.md',
     'package.json',
     manifest.launcher.start,

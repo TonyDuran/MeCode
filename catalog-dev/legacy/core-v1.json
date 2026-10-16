@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "id": "mecode-core",
+  "title": "MeCode original practice",
+  "provenance": { "kind": "original", "authors": ["MeCode contributors"], "license": "CC0-1.0", "sources": [] },
+  "problems": [
+    {
+      "id": "beacon-pairs",
+      "title": "Beacon Pairs",
+      "difficulty": "easy",
+      "patterns": ["arrays-hashing"],
+      "statement": "A coastline has n signal beacons, each with an integer strength. Two beacons (at different positions) can sync when their strengths add up to exactly target. Count how many unordered position pairs can sync.",
+      "inputFormat": "Line 1: n and target separated by a space. Line 2: n integers separated by spaces.",
+      "outputFormat": "One integer: the number of position pairs i<j with a[i]+a[j]=target.",
+      "constraints": ["1 <= n <= 100000", "-1000000000 <= a[i], target <= 1000000000", "The answer fits in a signed 64-bit integer"],
+      "comparison": "tokens",
+      "starters": {
+        "python": "import sys\n\ndef main():\n    data = sys.stdin.read().split()\n    n, target = int(data[0]), int(data[1])\n    a = list(map(int, data[2:2 + n]))\n    print(0)  # TODO\n\nmain()\n",
+        "javascript": "const data = require('fs').readFileSync(0, 'utf8').split(/\\s+/).filter(Boolean).map(Number);\nconst n = data[0], target = data[1];\nconst a = data.slice(2, 2 + n);\nconsole.log(0); // TODO\n",
+        "cpp": "#include <bits/stdc++.h>\nint main() {\n    long long n, target;\n    std::cin >> n >> target;\n    std::vector<long long> a(n);\n    for (auto &x : a) std::cin >> x;\n    std::cout << 0 << \"\\n\"; // TODO\n}\n",
+        "c": "#include <stdio.h>\nint main(void) {\n    long long n, target;\n    scanf(\"%lld %lld\", &n, &target);\n    printf(\"0\\n\"); /* TODO */\n    return 0;\n}\n"
+      },
+      "tests": [
+        { "id": "example-1", "kind": "example", "stdin": "5 6\n1 5 3 3 2\n", "expected": "2\n", "explanation": "Pairs (1,5) and (3,3)." },
+        { "id": "example-2", "kind": "example", "stdin": "4 0\n0 0 0 0\n", "expected": "6\n", "explanation": "Every pair of the four zeros." },
+        { "id": "check-single", "kind": "check", "stdin": "1 5\n5\n", "expected": "0\n" },
+        { "id": "check-all-equal", "kind": "check", "stdin": "6 10\n5 5 5 5 5 5\n", "expected": "15\n" },
+        { "id": "check-negatives", "kind": "check", "stdin": "5 -1\n-3 2 1 -2 0\n", "expected": "2\n" }
+      ]
+    },
+    {
+      "id": "bracket-ledger",
+      "title": "Bracket Ledger",
+      "difficulty": "easy",
+      "patterns": ["stack"],
+      "statement": "A clerk writes entries using three kinds of brackets: ( ), [ ] and { }. An entry is balanced when every bracket is closed by the matching kind in the correct nesting order. Decide whether the entry is balanced.",
+      "inputFormat": "A single line containing 1 to 100000 bracket characters.",
+      "outputFormat": "YES if balanced, otherwise NO.",
+      "constraints": ["1 <= length <= 100000", "Only the characters ()[]{} appear"],
+      "comparison": "tokens",
+      "starters": {
+        "python": "s = input().strip()\nprint('NO')  # TODO\n",
+        "javascript": "const s = require('fs').readFileSync(0, 'utf8').trim();\nconsole.log('NO'); // TODO\n",
+        "cpp": "#include <bits/stdc++.h>\nint main() {\n    std::string s;\n    std::cin >> s;\n    std::cout << \"NO\\n\"; // TODO\n}\n",
+        "c": "#include <stdio.h>\nint main(void) {\n    printf(\"NO\\n\"); /* TODO */\n    return 0;\n}\n"
+      },
+      "tests": [
+        { "id": "example-1", "kind": "example", "stdin": "([]{})\n", "expected": "YES\n" },
+        { "id": "example-2", "kind": "example", "stdin": "([)]\n", "expected": "NO\n", "explanation": "Closes ( while [ is still open." },
+        { "id": "check-open", "kind": "check", "stdin": "(\n", "expected": "NO\n" },
+        { "id": "check-close-first", "kind": "check", "stdin": "]\n", "expected": "NO\n" },
+        { "id": "check-nested", "kind": "check", "stdin": "{[()()]}\n", "expected": "YES\n" },
+        { "id": "check-unclosed", "kind": "check", "stdin": "(()\n", "expected": "NO\n" }
+      ]
+    },
+    {
+      "id": "steady-streak",
+      "title": "Steady Streak",
+      "difficulty": "easy",
+      "patterns": ["sliding-window"],
+      "statement": "A sensor logs n integer readings. A streak is a run of consecutive readings that are all equal. Report the length of the longest streak.",
+      "inputFormat": "Line 1: n. Line 2: n integers separated by spaces.",
+      "outputFormat": "One integer: the longest streak length.",
+      "constraints": ["1 <= n <= 200000", "-1000000000 <= reading <= 1000000000"],
+      "comparison": "tokens",
+      "starters": {
+        "python": "import sys\ndata = sys.stdin.read().split()\nprint(0)  # TODO\n",
+        "javascript": "const d = require('fs').readFileSync(0, 'utf8').split(/\\s+/).filter(Boolean);\nconsole.log(0); // TODO\n"
+      },
+      "tests": [
+        { "id": "example-1", "kind": "example", "stdin": "7\n1 1 2 2 2 3 3\n", "expected": "3\n" },
+        { "id": "example-2", "kind": "example", "stdin": "1\n9\n", "expected": "1\n" },
+        { "id": "check-all-same", "kind": "check", "stdin": "5\n4 4 4 4 4\n", "expected": "5\n" },
+        { "id": "check-alternating", "kind": "check", "stdin": "6\n1 2 1 2 1 2\n", "expected": "1\n" }
+      ]
+    }
+  ]
+}
