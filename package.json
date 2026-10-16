@@ -1,0 +1,15 @@
+{
+  "name": "mecode-v2",
+  "version": "0.0.2-t04",
+  "private": true,
+  "description": "MeCode V2 vertical slice: local web app + containerized runner (optional Electron wrapper)",
+  "main": "src/main.cjs",
+  "license": "UNLICENSED",
+  "scripts": {
+    "test": "node --test \"tests/unit/*.test.cjs\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "node src/web/server.cjs",
+    "test:integration": "node --test --test-concurrency=1 tests/integration/docker.test.cjs",
+    "package:web": "node scripts/package-web.cjs"
+  }
+}

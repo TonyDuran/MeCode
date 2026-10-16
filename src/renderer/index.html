@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+<title>MeCode V2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <strong>MeCode V2</strong>
+  <span id="backend" role="status">backend: checking</span>
+  <button id="retry" hidden>Retry</button>
+  <span class="sp"></span>
+  <label class="btn">Import pack… <input id="importFile" type="file" accept=".json,application/json" hidden></label>
+  <button id="reload">Reload packs</button>
+  <span id="importStatus"></span>
+  <details id="settingsOpen"><summary>Limits</summary><div id="settingsFields"></div><button id="settingsApply">Apply</button> <span id="settingsMsg"></span></details>
+  <button id="quit" hidden>Quit server</button>
+</header>
+<div id="banner" role="alert" hidden></div>
+<main>
+  <nav>
+    <input id="search" type="search" placeholder="Search title / pattern">
+    <ul id="list"></ul>
+  </nav>
+  <section id="work" hidden>
+    <h2 id="title"></h2>
+    <div id="meta"></div>
+    <pre id="statement"></pre>
+    <pre id="formats"></pre>
+    <div id="examples"></div>
+    <div class="bar">
+      <label>Language <select id="lang"></select></label>
+      <button id="save">Save</button><span id="saveState"></span>
+    </div>
+    <textarea id="editor" spellcheck="false"></textarea>
+    <div class="bar">
+      <button id="runEx">Run examples</button>
+      <button id="runCustom">Run custom input</button>
+      <button id="submit">Submit</button>
+      <button id="cancel" disabled>Cancel</button>
+    </div>
+    <textarea id="custom" spellcheck="false" placeholder="custom stdin"></textarea>
+    <div id="bgjob"></div>
+    <h3 id="verdict">No result yet</h3>
+    <pre id="results"></pre>
+  </section>
+</main>
+<footer id="packsDir"></footer>
+<script src="bridge.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
