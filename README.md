@@ -14,7 +14,7 @@ Status: vertical slice (3 bundled problems, Python / JavaScript / C++17 / C17). 
 
 ## Requirements
 
-- Linux/macOS/Windows with Node.js 20+ (developed on Node 26) and a browser.
+- Linux/macOS/Windows with Node.js 26.7.0 (the only validated version; older versions are unverified) and a browser.
 - Docker (rootless is fine) running, and the engine image built once (needs a network you are allowed to use; the app never pulls or downloads on its own).
 
 ## Install and start

@@ -40,11 +40,11 @@ jobs:
         run: npm run lint
       - name: Type check (tsc --noEmit, checkJs over src/ and scripts/)
         run: npm run typecheck
-      - name: Unit tests (fake-engine and local-web socket tests; expect 86 pass, 0 skipped)
+      - name: Unit tests (fake-engine and local-web socket tests; expect 92 pass, 0 skipped)
         run: |
           npm test 2>&1 | tee unit.log
           grep -E '^ℹ (tests|pass|fail|skipped)' unit.log
-          grep -q '^ℹ tests 86$' unit.log && grep -q '^ℹ pass 86$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
+          grep -q '^ℹ tests 92$' unit.log && grep -q '^ℹ pass 92$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
 
   engine-gui:
     name: real Docker + real browser (integration, GUI E2E, canaries, fresh package)

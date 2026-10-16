@@ -12,9 +12,13 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const cp = require('node:child_process');
 const { readTarGz, readZip } = require('./lib/archive.cjs');
+const { entryProblem, destinationUnder } = require('./lib/safe-path.cjs');
 
 const root = path.join(__dirname, '..');
-const dir = path.join(root, 'dist', 'platform');
+const argv = process.argv;
+const argAt = (/** @type {string} */ k) => (argv.indexOf(k) > 0 ? argv[argv.indexOf(k) + 1] : undefined);
+const dirArg = argAt('--dir');
+const dir = dirArg ? path.resolve(dirArg) : path.join(root, 'dist', 'platform');
 const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const rev = cp.execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 const problems = [];
@@ -23,12 +27,13 @@ const bad = (m) => {
   console.error(`ARCHIVE-BAD ${m}`);
 };
 
-function extract(file, into) {
-  const buf = fs.readFileSync(file);
-  const entries = file.endsWith('.zip') ? readZip(buf) : readTarGz(buf);
-  for (const e of entries) {
-    if (e.name.startsWith('/') || e.name.split('/').includes('..')) throw new Error(`unsafe path in archive: ${e.name}`);
-    const dst = path.join(into, e.name);
+const readEntries = (/** @type {string} */ file) => (file.endsWith('.zip') ? readZip(fs.readFileSync(file)) : readTarGz(fs.readFileSync(file)));
+
+// Validate EVERY entry before the first byte is written (only regular files and directories are ever created).
+function extract(/** @type {string} */ file, /** @type {string} */ into) {
+  const entries = readEntries(file);
+  const plan = entries.map((e) => ({ e, dst: destinationUnder(into, e.name) }));
+  for (const { e, dst } of plan) {
     if (e.dir) fs.mkdirSync(dst, { recursive: true });
     else {
       fs.mkdirSync(path.dirname(dst), { recursive: true });
@@ -42,7 +47,11 @@ function extract(file, into) {
 function structure(file) {
   const base = path.basename(file);
   const osName = /-(linux|macos|windows)\./.exec(base)[1];
-  const entries = file.endsWith('.zip') ? readZip(fs.readFileSync(file)) : readTarGz(fs.readFileSync(file));
+  const entries = readEntries(file);
+  for (const e of entries) {
+    const why = entryProblem(e.name);
+    if (why) return bad(`${base}: unsafe entry ${JSON.stringify(e.name)}: ${why}`);
+  }
   const tops = new Set(entries.map((e) => e.name.split('/')[0]));
   if (tops.size !== 1) return bad(`${base}: expected one top directory, got ${[...tops].join(',')}`);
   const top = [...tops][0];
@@ -74,6 +83,19 @@ function structure(file) {
   ])
     if (!byName.has(need)) bad(`${base}: missing payload ${need}`);
   if (byName.size < 25) bad(`${base}: suspiciously small payload (${byName.size} files)`);
+  // Runtime claims must match the single validated Node (package.json engines) everywhere a recipient reads them.
+  const nodeV = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).engines.node;
+  const claims = {
+    'INSTALL.md': byName.get('INSTALL.md'),
+    [manifest.launcher.start]: byName.get(manifest.launcher.start),
+    'MANIFEST.json requires.node': { data: Buffer.from(String(manifest.requires && manifest.requires.node)) },
+  };
+  for (const [n, e] of Object.entries(claims)) {
+    if (!e) continue;
+    const t = e.data.toString('utf8');
+    if (!t.includes(nodeV)) bad(`${base}: ${n} does not state the validated Node.js ${nodeV}`);
+    if (/or newer|\b\d+\+|>=\s*\d/.test(t.replace(/\d+\.\d+\.\d+\+?/g, (m) => (m.endsWith('+') ? m : '')))) bad(`${base}: ${n} promises an unvalidated Node.js range`);
+  }
   if (osName !== 'windows')
     for (const l of [manifest.launcher.start, manifest.launcher.buildEngine]) if (byName.get(l) && (byName.get(l).mode & 0o111) !== 0o111) bad(`${base}: launcher ${l} lost its exec bit`);
   if (osName === 'windows' && !byName.get(manifest.launcher.start).data.toString().includes('\r\n')) bad(`${base}: windows launcher is not CRLF`);
@@ -83,6 +105,7 @@ function structure(file) {
 async function runArchive(file, wantUnit, keepIn) {
   const base = path.basename(file);
   const osName = /-(linux|macos|windows)\./.exec(base)[1];
+  for (const e of readEntries(file)) destinationUnder(path.join(path.sep, 'x'), e.name); // fail before creating anything
   const tmp = keepIn || fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'mecode-arch-'));
   fs.mkdirSync(tmp, { recursive: true });
   extract(file, tmp);
@@ -152,14 +175,35 @@ async function runArchive(file, wantUnit, keepIn) {
   const files = sums.map((l) => l.split(/\s+/)[1]);
   for (const l of sums) {
     const [h, n] = l.split(/\s+/);
-    if (sha256(fs.readFileSync(path.join(dir, n))) !== h) bad(`${n}: SHA256SUMS mismatch`);
+    if (!n || path.basename(n) !== n || n.includes('\\')) {
+      bad(`SHA256SUMS lists a non-plain file name ${JSON.stringify(n)}`);
+      continue;
+    }
+    try {
+      if (sha256(fs.readFileSync(path.join(dir, n))) !== h) bad(`${n}: SHA256SUMS mismatch`);
+    } catch (e) {
+      bad(`${n}: unreadable (${/** @type {Error} */ (e).message})`);
+    }
   }
   if (files.length !== 6) bad(`expected 6 archives, found ${files.length}`);
-  for (const n of files) structure(path.join(dir, n));
-  const i = process.argv.indexOf('--run');
-  if (i > 0) {
-    const x = process.argv.indexOf('--extract-to');
-    await runArchive(path.resolve(process.argv[i + 1]), process.argv.includes('--unit'), x > 0 ? path.resolve(process.argv[x + 1]) : null);
+  for (const n of files) {
+    try {
+      if (n && path.basename(n) === n) structure(path.join(dir, n));
+    } catch (e) {
+      bad(`${n}: structure check failed (${/** @type {Error} */ (e).message})`);
+    }
+  }
+  const runArg = argAt('--run');
+  const runFile = runArg === undefined ? null : path.resolve(runArg);
+  if (runFile && !files.some((n) => path.resolve(dir, n) === runFile)) bad(`--run ${runArg} is not one of the verified archives listed in SHA256SUMS`);
+  // Nothing below may extract or spawn unless EVERY check above passed.
+  if (problems.length) {
+    console.error(`ARCHIVES-FAIL ${problems.length} problem(s); nothing extracted or started`);
+    process.exit(1);
+  }
+  if (runFile) {
+    const x = argAt('--extract-to');
+    await runArchive(runFile, argv.includes('--unit'), x ? path.resolve(x) : null);
   }
   if (problems.length) {
     console.error(`ARCHIVES-FAIL ${problems.length} problem(s)`);

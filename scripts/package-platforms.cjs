@@ -25,17 +25,20 @@ const include = (f) => ['README.md', 'package.json', 'scripts/make-demo-pack.cjs
 const common = tracked.filter(include).sort();
 
 const IS_WIN = { linux: false, macos: false, windows: true };
-const lines = (s, crlf) => Buffer.from(crlf ? s.replace(/\n/g, '\r\n') : s, 'utf8');
+const lines = (s, crlf) => {
+  const t = s.replaceAll('@NODE@', pkg.engines.node);
+  return Buffer.from(crlf ? t.replace(/\n/g, '\r\n') : t, 'utf8');
+};
 
-const NODE_CHECK = `node -e "process.exit(Number(process.versions.node.split('.')[0])>=20?0:1)"`;
+const NODE_CHECK = `node -e "process.exit(process.versions.node==='@NODE@'?0:1)"`;
 const launchers = {
   linux: {
     'start.sh': [
       '#!/bin/sh',
       'set -eu',
       'cd "$(dirname "$0")"',
-      'command -v node >/dev/null 2>&1 || { echo "Node.js 20 or newer is required (https://nodejs.org)."; exit 1; }',
-      `${NODE_CHECK} || { echo "Node.js 20 or newer is required; found $(node --version)."; exit 1; }`,
+      'command -v node >/dev/null 2>&1 || { echo "Node.js @NODE@ is required (https://nodejs.org)."; exit 1; }',
+      `${NODE_CHECK} || echo "WARNING: MeCode is validated only with Node.js @NODE@; found $(node --version), which is unverified. Continuing."`,
       'command -v docker >/dev/null 2>&1 || echo "WARNING: docker not found. The UI will start but Run stays disabled until Docker is installed and running."',
       'docker image inspect mecode-engine:v2 >/dev/null 2>&1 || echo "NOTE: engine image mecode-engine:v2 not found. Build it once with ./build-engine.sh (needs network)."',
       'exec node src/web/server.cjs',
@@ -56,8 +59,8 @@ const launchers = {
       '#!/bin/sh',
       'set -eu',
       'cd "$(dirname "$0")"',
-      'command -v node >/dev/null 2>&1 || { echo "Node.js 20 or newer is required (https://nodejs.org)."; exit 1; }',
-      `${NODE_CHECK} || { echo "Node.js 20 or newer is required; found $(node --version)."; exit 1; }`,
+      'command -v node >/dev/null 2>&1 || { echo "Node.js @NODE@ is required (https://nodejs.org)."; exit 1; }',
+      `${NODE_CHECK} || echo "WARNING: MeCode is validated only with Node.js @NODE@; found $(node --version), which is unverified. Continuing."`,
       'command -v docker >/dev/null 2>&1 || echo "WARNING: docker not found. Install Docker Desktop and start it; Run stays disabled until the engine is ready."',
       'docker image inspect mecode-engine:v2 >/dev/null 2>&1 || echo "NOTE: engine image mecode-engine:v2 not found. Build it once with ./build-engine.command (needs network)."',
       'exec node src/web/server.cjs',
@@ -78,8 +81,8 @@ const launchers = {
       '@echo off',
       'setlocal',
       'cd /d "%~dp0"',
-      'where node >nul 2>nul || (echo Node.js 20 or newer is required: https://nodejs.org & exit /b 1)',
-      `${NODE_CHECK} || (echo Node.js 20 or newer is required. & exit /b 1)`,
+      'where node >nul 2>nul || (echo Node.js @NODE@ is required: https://nodejs.org & exit /b 1)',
+      `${NODE_CHECK} || echo WARNING: MeCode is validated only with Node.js @NODE@; this Node.js version is unverified. Continuing.`,
       'where docker >nul 2>nul || echo WARNING: docker not found. The UI will start but Run stays disabled until Docker Desktop is installed and running.',
       'docker image inspect mecode-engine:v2 >nul 2>nul || echo NOTE: engine image mecode-engine:v2 not found. Build it once with build-engine.cmd (needs network).',
       'node src\\web\\server.cjs',
@@ -100,10 +103,12 @@ const launchers = {
 const startName = { linux: 'start.sh', macos: 'start.command', windows: 'start.cmd' };
 const buildName = { linux: 'build-engine.sh', macos: 'build-engine.command', windows: 'build-engine.cmd' };
 const prereq = {
-  linux: 'Install Node.js 20+ (26.7.0 is what the project was built with) and Docker Engine (rootless or rootful; the user running MeCode must be able to run `docker`).',
+  linux:
+    'Install Node.js @NODE@ (the only validated version; other versions, including older ones, are unverified) and Docker Engine (rootless or rootful; the user running MeCode must be able to run `docker`).',
   macos:
-    'Install Node.js 20+ and Docker Desktop (manual install, then start it). Apple Silicon: the engine image is built locally from engine/Dockerfile for your architecture; that path is UNTESTED here.',
-  windows: 'Install Node.js 20+ and Docker Desktop with the Linux-container (WSL2) backend (manual install, then start it).',
+    'Install Node.js @NODE@ (the only validated version; other versions, including older ones, are unverified) and Docker Desktop (manual install, then start it). Apple Silicon: the engine image is built locally from engine/Dockerfile for your architecture; that path is UNTESTED here.',
+  windows:
+    'Install Node.js @NODE@ (the only validated version; other versions, including older ones, are unverified) and Docker Desktop with the Linux-container (WSL2) backend (manual install, then start it).',
 };
 const installMd = (os) => `# MeCode V2 local web distribution (${os})
 
@@ -145,7 +150,10 @@ function build(os) {
     sourceTree: tree,
     sourceDirty: dirty,
     commitTimeUnix: commitTime,
-    requires: { node: '>=20 (built/tested with ' + pkg.engines.node + ')', docker: 'Docker Engine/Desktop with Linux containers; engine image built locally from engine/Dockerfile' },
+    requires: {
+      node: pkg.engines.node + ' (the only validated version; other versions, including older ones, are unverified)',
+      docker: 'Docker Engine/Desktop with Linux containers; engine image built locally from engine/Dockerfile',
+    },
     engineImage: { tag: 'mecode-engine:v2', recipe: 'engine/Dockerfile', note: 'built locally by the user; not shipped inside this archive' },
     launcher: { start: startName[os], buildEngine: buildName[os] },
     signed: false,

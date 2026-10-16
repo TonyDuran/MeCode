@@ -42,9 +42,9 @@ test('GUI: import -> edit -> WRONG_ANSWER -> ACCEPTED -> save -> restart -> rest
     console.log(`browser: ${browser.version()} (sandbox enabled)`);
     const ctx = await browser.newContext({ acceptDownloads: false });
     page = await ctx.newPage();
-    // Offline-ness: the page must make no request outside the loopback origin.
+    // Offline-ness: NO page in this context (first load and the reopened page after restart) may request outside the loopback origin.
     const external = [];
-    page.on('request', (r) => {
+    ctx.on('request', (r) => {
       if (!/^(http:\/\/127\.0\.0\.1:\d+\/|about:|data:|blob:)/.test(r.url())) external.push(r.url());
     });
 
