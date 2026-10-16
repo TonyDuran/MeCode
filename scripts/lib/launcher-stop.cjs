@@ -106,4 +106,42 @@ async function awaitInstallContainersAbsent(installId, { waitMs = 20000, pollMs 
   if (!last.ok) return { checked: false, absent: false, reason: `docker did not answer: ${last.error}`, rows: [] };
   return { checked: true, absent: last.rows.length === 0, reason: last.rows.length ? `still present after ${waitMs}ms` : '', rows: last.rows };
 }
-module.exports = { trackExit, stopLauncher, readInstallId, psRows, awaitInstallContainersAbsent, groupAlive };
+/** true when a Docker daemon answers right now (bounded) */
+function defaultProbe() {
+  return cp.spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8', timeout: 20000 }).status === 0;
+}
+/**
+ * CALLER POLICY for POSIX launcher teardown (T31 R2). Strict by default: only a clean exit 0 and a CONFIRMED-absent install container set pass,
+ * whatever Docker does later. The ONLY relaxation is the explicit unavailable-Docker archive-smoke mode (native no-engine fixture/job), and only if
+ * Docker was recorded UNAVAILABLE before launch and is still unavailable after: then exit 3 is accepted and container removal is reported NOT ASSERTED.
+ * Exit 2, escalation, available-before/unavailable-after, and an unavailable-mode run on a host where Docker answers all remain failures.
+ */
+async function teardownLauncher(
+  child,
+  tracker,
+  /** @type {{unavailableSmoke?: boolean, dockerBefore?: boolean|null, installId?: string, probe?: () => boolean, stopOpts?: object, absentOpts?: object}} */ {
+    unavailableSmoke = false,
+    dockerBefore,
+    installId = '',
+    probe = defaultProbe,
+    stopOpts = {},
+    absentOpts = {},
+  } = {},
+) {
+  const problems = [];
+  const relaxed = unavailableSmoke && dockerBefore === false;
+  if (unavailableSmoke && !relaxed) problems.push('explicit unavailable-Docker smoke requires Docker to be recorded unavailable BEFORE launch; it answered or was not probed (strict policy applied)');
+  const st = await stopLauncher(child, tracker, { ...stopOpts, okCodes: relaxed ? [0, 3] : [0] });
+  problems.push(...st.problems);
+  let containers;
+  if (relaxed) {
+    if (probe()) problems.push('Docker became available after an unavailable-before launch; engine-container removal can no longer be treated as NOT ASSERTED');
+    containers = { mode: 'not-asserted', checked: false, absent: false, reason: 'Docker unavailable before and after; removal NOT ASSERTED', rows: [] };
+  } else {
+    const c = await awaitInstallContainersAbsent(installId, absentOpts);
+    containers = { mode: 'asserted', ...c };
+    if (!c.absent) problems.push(`install-owned containers not confirmed absent after launcher stop (${c.reason})`);
+  }
+  return { st, containers, problems };
+}
+module.exports = { trackExit, stopLauncher, teardownLauncher, defaultProbe, readInstallId, psRows, awaitInstallContainersAbsent, groupAlive };

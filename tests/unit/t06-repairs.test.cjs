@@ -22,6 +22,7 @@ const tmp = () => fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 't
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SECRET = 'SENTINEL-SECRET-DO-NOT-LEAK';
 
+let lastCreateArgs = []; // limits now travel in the `docker create` argv (start -ai carries only the name)
 function controlsFromArgs(args) {
   const g = (f) => args[args.indexOf(f) + 1];
   return { memoryMax: String(parseInt(g('--memory'), 10) * 1048576), pidsMax: g('--pids-limit'), cpuMax: `${Math.round(Number(g('--cpus')) * 100000)} 100000`, uid: 65534 };
@@ -62,7 +63,7 @@ function fakeSpawn(script = {}, spawned = []) {
     });
     setImmediate(() => {
       if (script.noReady) return;
-      send({ type: 'ready', languages: [{ id: 'python', version: 'fake' }], controls: controlsFromArgs(args), ...(script.ready || {}) });
+      send({ type: 'ready', languages: [{ id: 'python', version: 'fake' }], controls: controlsFromArgs(lastCreateArgs), ...(script.ready || {}) });
     });
     spawned.push(child);
     return child;
@@ -72,10 +73,11 @@ const dockerOk =
   (log = [], o = {}) =>
   async (args) => {
     log.push({ t: Date.now(), a: args.join(' ') });
+    if (args[0] === 'create') lastCreateArgs = args;
     if (o.delay) await sleep(o.delay);
     if (args[0] === 'inspect') return { code: 0, stdout: 'false\n', stderr: '' };
     if (args[0] === 'ps') return { code: 0, stdout: '', stderr: '' };
-    return { code: 0, stdout: 'x\n', stderr: '' };
+    return { code: 0, stdout: args[0] === 'create' ? `${'ab'.repeat(32)}\n` : 'x\n', stderr: '' };
   };
 const caseF = (jobId, id, stdout, x = {}) => ({ type: 'case', jobId, id, stdout, stderr: '', exitCode: 0, signal: null, elapsedMs: 1, timedOut: false, outputLimit: false, ...x });
 const LIM = { caseMs: 2000, compileMs: 10000, jobMs: 5000, outputBytes: 262144 };

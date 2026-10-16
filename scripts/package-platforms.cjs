@@ -27,6 +27,7 @@ const include = (f) =>
   f !== 'tests/unit/t27-provision.test.cjs' && // dev-only: fake-docker (POSIX) mock test of the shipped provisioning script
   f !== 'tests/unit/t29-launcher-stop.test.cjs' && // dev-only: needs scripts/lib (not shipped)
   f !== 'tests/unit/t29-wrong-baseline.test.cjs' && // dev-only: needs catalog-dev (not shipped)
+  f !== 'tests/unit/t31-archive-policy.test.cjs' && // dev-only: needs scripts/lib and .github (not shipped)
   f !== 'tests/integration/catalog-cleanup.test.cjs' && // dev-only: needs the full source checkout (scripts/catalog-docker-accept.cjs), never shipped
   (['README.md', 'package.json', 'scripts/make-demo-pack.cjs', 'scripts/provision-engine.cjs'].includes(f) || /^(src|engine|packs|docs)\//.test(f) || /^tests\/(unit|integration)\//.test(f)); // build-tool tests need scripts/lib, which is not shipped
 const common = tracked.filter(include).sort();

@@ -31,7 +31,7 @@ function fakeSpawn() {
     return child;
   };
 }
-const docker = async (args) => (args[0] === 'ps' ? { code: 0, stdout: '', stderr: '' } : { code: 0, stdout: 'x\n', stderr: '' });
+const docker = async (args) => (args[0] === 'ps' ? { code: 0, stdout: '', stderr: '' } : { code: 0, stdout: args[0] === 'create' ? `${'ab'.repeat(32)}\n` : 'x\n', stderr: '' });
 async function boot() {
   const d = tmp();
   return startWeb({ userData: d, appRoot: root, backendOpts: { docker, spawn: fakeSpawn(), readyMs: 500, cleanupMs: 300 } });

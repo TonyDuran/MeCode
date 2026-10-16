@@ -61,6 +61,68 @@ function buildRunArgs({ name, installId, image, limits }) {
   ];
 }
 
+/** `docker create` argv: EXACTLY the buildRunArgs sandbox/security/resource flags, only the verb differs (start -ai attaches later). */
+function buildCreateArgs(o) {
+  return ['create', ...buildRunArgs(o).slice(1)];
+}
+
+/**
+ * Bounded `docker create` run as a task-owned CLI in its OWN process group (POSIX), so a TERM sent to the parent/harness group cannot kill a
+ * pending create before the daemon replies. The handle is retained (no unref), killed (whole group) on timeout and on parent exit.
+ * Resolves { code, stdout, stderr, timedOut, error }. code<0 or timedOut => the daemon outcome is UNKNOWN (never "not created").
+ */
+const liveCreates = new Set();
+let exitHookInstalled = false;
+function killGroup(child) {
+  try {
+    if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL');
+    else child.kill('SIGKILL');
+  } catch {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
+}
+function dockerCreateDetached(args, timeoutMs, bin = 'docker') {
+  if (!exitHookInstalled) {
+    exitHookInstalled = true;
+    process.on('exit', () => {
+      for (const c of liveCreates) killGroup(c);
+    });
+  }
+  return new Promise((resolve) => {
+    let done = false;
+    let stdout = '';
+    let stderr = '';
+    let child;
+    const finish = (r) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (child) liveCreates.delete(child);
+      resolve({ stdout, stderr, timedOut: false, error: null, ...r });
+    };
+    const timer = setTimeout(() => {
+      if (child) killGroup(child);
+      finish({ code: -1, timedOut: true, error: `docker create timed out after ${timeoutMs} ms` });
+    }, timeoutMs);
+    try {
+      child = cp.spawn(bin, args, { detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+      return finish({ code: -1, error: String(e && e.message) });
+    }
+    liveCreates.add(child);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (d) => (stdout = (stdout + d).slice(0, 4096)));
+    child.stderr.on('data', (d) => (stderr = (stderr + d).slice(-2000)));
+    child.on('error', (e) => finish({ code: -1, error: e.message }));
+    child.on('close', (code, signal) => finish({ code: typeof code === 'number' ? code : -1, error: signal ? `signal ${signal}` : null }));
+  });
+}
+
 function dockerExec(args, timeoutMs) {
   return new Promise((resolve) => {
     cp.execFile('docker', args, { timeout: timeoutMs, maxBuffer: 1 << 20, encoding: 'utf8' }, (err, stdout, stderr) => {
@@ -104,17 +166,21 @@ class Backend extends EventEmitter {
   /** @type {string} */ image;
   /** @type {any} */ spawn;
   /** @type {any} */ docker;
+  /** @type {any} */ dockerCreate;
+  /** @type {number} */ createMs;
   /** @type {any} */ limits;
   /** @type {number} */ readyMs;
   /** @type {number} */ idleMs;
   /** @type {number} */ cleanupMs;
   /** @type {number} */ watchdogGraceMs;
-  /** @param {{installId?: string, image?: string, spawn?: any, docker?: any, limits?: any, readyMs?: number, idleMs?: number, cleanupMs?: number, watchdogGraceMs?: number}} [opts] */
+  /** @param {{installId?: string, image?: string, spawn?: any, docker?: any, dockerCreate?: any, createMs?: number, limits?: any, readyMs?: number, idleMs?: number, cleanupMs?: number, watchdogGraceMs?: number}} [opts] */
   constructor({
     installId,
     image = 'mecode-engine:v2',
     spawn = cp.spawn,
     docker = dockerExec,
+    dockerCreate,
+    createMs = 4000,
     limits = DEFAULT_LIMITS,
     readyMs = 20000,
     idleMs = 120000,
@@ -122,15 +188,42 @@ class Backend extends EventEmitter {
     watchdogGraceMs = 3000,
   } = {}) {
     super();
-    Object.assign(this, { installId, image, spawn, docker, limits, readyMs, idleMs, cleanupMs, watchdogGraceMs });
+    Object.assign(this, {
+      installId,
+      image,
+      spawn,
+      docker,
+      dockerCreate: dockerCreate || (docker === dockerExec ? dockerCreateDetached : docker),
+      createMs,
+      limits,
+      readyMs,
+      idleMs,
+      cleanupMs,
+      watchdogGraceMs,
+    });
     this.status = { state: 'checking', languages: [] };
     this.cur = null;
+    /** every worker whose container may exist (or may still be published) until its removal is confirmed; independent of cur */
+    this.workers = new Set();
+    /** bounded, sanitized lifecycle trace (phase/name/install/state only; no source, URLs or secrets) */
+    this.trace = [];
     this.starting = null;
     this.stopped = false;
     this.stopping = null;
     this.runCtl = null;
     this.activeLimits = null;
     this.settingsTx = false;
+  }
+  _tr(phase, w) {
+    this.trace.push({
+      t: new Date().toISOString(),
+      mono: Math.round(performance.now()),
+      phase,
+      name: w ? w.name : undefined,
+      install: String(this.installId).slice(0, 8),
+      create: w ? w.createState : undefined,
+    });
+    if (this.trace.length > 64) this.trace.shift();
   }
   _set(state, extra = {}) {
     this.status = { state, languages: [], ...extra };
@@ -246,8 +339,47 @@ class Backend extends EventEmitter {
     const limits = this.limits;
     this._set('starting', { imageId });
     const name = `mecode-${this.installId.slice(0, 8)}-${crypto.randomBytes(4).toString('hex')}`;
-    const child = this.spawn('docker', buildRunArgs({ name, installId: this.installId, image: this.image, limits }), { stdio: ['pipe', 'pipe', 'pipe'] });
-    const w = { name, child, buf: '', frames: [], sizes: [], qBytes: 0, waiter: null, exited: false, stderr: '', limits };
+    const w = { name, child: null, buf: '', frames: [], sizes: [], qBytes: 0, waiter: null, exited: false, stderr: '', limits, createState: 'none', id: null, createError: '' };
+    this.workers.add(w); // retained from BEFORE the create request until removal is confirmed (survives cur being cleared)
+    this.cur = w;
+    // Creation-completion boundary: bounded `docker create`, awaited to its reply. Cancellation never kills it; it only marks intent (this.stopped).
+    w.createState = 'pending';
+    this._tr('create-issued', w);
+    let cr;
+    let createTimer;
+    try {
+      // The runner enforces createMs itself; this outer bound only guards an injected/misbehaving runner so shutdown stays bounded (never "not created").
+      const bound = new Promise((res) => {
+        createTimer = setTimeout(() => res({ code: -1, stdout: '', stderr: '', timedOut: true, error: 'create outcome not received in time' }), this.createMs + 250);
+      });
+      cr = await Promise.race([Promise.resolve().then(() => this.dockerCreate(buildCreateArgs({ name, installId: this.installId, image: this.image, limits }), this.createMs)), bound]);
+    } catch (e) {
+      cr = { code: -1, stdout: '', stderr: '', error: String((e && e.message) || e) };
+    } finally {
+      clearTimeout(createTimer);
+    }
+    const cid = String((cr && cr.stdout) || '').trim();
+    if (cr && cr.code === 0 && /^[0-9a-f]{12,64}$/.test(cid)) {
+      w.createState = 'created';
+      w.id = cid;
+    } else if (cr && !cr.timedOut && typeof cr.code === 'number' && cr.code > 0)
+      w.createState = 'failed'; // daemon answered with an error: nothing created
+    else w.createState = 'unknown'; // timeout / killed / unreadable id: the daemon may still publish this exact name
+    w.createError = String((cr && (cr.stderr || cr.error)) || '')
+      .trim()
+      .slice(0, 200);
+    if (w.createState !== 'created' || this.stopped) {
+      this._tr(this.stopped ? 'create-settled-stop-intent-no-start' : 'create-settled-not-created', w);
+      const c = await this._retire(w); // exact-name removal + absence confirmation; for 'unknown' this can never confirm
+      if (this.cur === w) this.cur = null;
+      if (!c.confirmed) this._set('cleanup-unconfirmed', { reason: `could not confirm removal of ${w.name}; remove it manually: docker rm -f ${w.name}`, imageId });
+      else if (!this.stopped) this._set('unavailable', { reason: `Engine container could not be created (${w.createError || 'docker create failed'}). Press Retry.`, imageId });
+      return this.getStatus();
+    }
+    // no await between the stop-intent check above and the spawn: nothing can launch after stop
+    const child = this.spawn('docker', ['start', '-a', '-i', name], { stdio: ['pipe', 'pipe', 'pipe'] });
+    this._tr('start-attached', w);
+    w.child = child;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d) => {
@@ -281,7 +413,6 @@ class Backend extends EventEmitter {
       this._wake(w);
       this._died(w);
     });
-    this.cur = w;
     try {
       const ready = await this._next(w, this.readyMs);
       if (!ready || ready.type !== 'ready' || !validReady(ready)) throw new Error(`no valid ready frame (${w.stderr.trim().slice(0, 200) || 'process ended'})`);
@@ -408,6 +539,7 @@ class Backend extends EventEmitter {
     });
   }
   _kill(w) {
+    if (!w.child) return; // no attached client yet: a pending create is never killed (see _start)
     try {
       w.child.kill('SIGKILL');
     } catch {
@@ -455,21 +587,32 @@ class Backend extends EventEmitter {
     }
     try {
       try {
-        w.child.kill('SIGKILL');
+        if (w.child) w.child.kill('SIGKILL');
       } catch {
         /* ignore */
       }
       if (left() > 0) this._kill(w);
-      const rm = await bounded(['rm', '-f', w.name], this.cleanupMs);
+      // 'none': no create was ever issued. 'failed': the daemon answered with an error, so "No such container" is the expected truthful reply.
+      // 'unknown'/'pending': the daemon may STILL publish this name, so absence can never be confirmed (client/group close is not completion).
+      let removed = true;
+      if (w.createState !== 'none') {
+        const rm = await bounded(['rm', '-f', w.name], this.cleanupMs);
+        removed = rm.code === 0 || (w.createState === 'failed' && /no such container/i.test(rm.stderr || ''));
+      }
       const chk = await bounded(['ps', '-aq', '--filter', `name=^${w.name}$`], 3000);
-      confirmed = rm.code === 0 && chk.code === 0 && chk.stdout.trim() === '';
+      confirmed = removed && w.createState !== 'unknown' && w.createState !== 'pending' && chk.code === 0 && chk.stdout.trim() === '';
     } catch {
       confirmed = false;
     }
     return { confirmed, oomKilled: oom, ms: Date.now() - t0, container: w.name };
   }
   _retire(w) {
-    if (!w.retiring) w.retiring = this._cleanup(w);
+    if (!w.retiring)
+      w.retiring = this._cleanup(w).then((c) => {
+        this._tr(c.confirmed ? 'retire-confirmed' : 'retire-UNCONFIRMED', w);
+        if (c.confirmed) this.workers.delete(w);
+        return c;
+      });
     return w.retiring;
   }
 
@@ -490,14 +633,17 @@ class Backend extends EventEmitter {
         }
       }
       let ok = true;
-      const w = this.cur;
-      if (w) {
+      // Every worker that may still own a container, independent of cur (startup may already have cleared it): an unresolved creation or a
+      // failed retirement is combined into the receipt; an empty `ps` below cannot erase it.
+      for (const w of [...this.workers]) {
         this._kill(w);
         const c = await this._retire(w);
-        ok = c.confirmed;
+        if (!c.confirmed) ok = false;
       }
       if (!(await this._sweepStale())) ok = false;
       this.cur = null;
+      this._tr(ok ? 'stop-receipt-confirmed' : 'stop-receipt-UNCONFIRMED');
+      if (!ok) console.error(`BACKEND-LIFECYCLE-TRACE ${JSON.stringify(this.trace.slice(-24))}`); // bounded, sanitized: phase/name/install/create-state only
       this._set(ok ? 'unavailable' : 'cleanup-unconfirmed', { reason: ok ? 'backend stopped' : 'shutdown could not confirm container removal', imageId: prev });
       return { confirmed: ok };
     })();
@@ -703,4 +849,4 @@ class Backend extends EventEmitter {
   }
 }
 
-module.exports = { Backend, buildRunArgs, validateLimits, controlsMatch, DEFAULT_LIMITS, RANGES };
+module.exports = { Backend, buildRunArgs, buildCreateArgs, dockerCreateDetached, validateLimits, controlsMatch, DEFAULT_LIMITS, RANGES };

@@ -40,11 +40,11 @@ jobs:
         run: npm run lint
       - name: Type check (tsc --noEmit, checkJs over src/ and scripts/)
         run: npm run typecheck
-      - name: Unit tests (fake-engine and local-web socket tests; expect 140 pass, 0 skipped)
+      - name: Unit tests (fake-engine and local-web socket tests; expect 158 pass, 0 skipped)
         run: |
           npm test 2>&1 | tee unit.log
           grep -E '^ℹ (tests|pass|fail|skipped)' unit.log
-          grep -q '^ℹ tests 140$' unit.log && grep -q '^ℹ pass 140$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
+          grep -q '^ℹ tests 158$' unit.log && grep -q '^ℹ pass 158$' unit.log && grep -q '^ℹ fail 0$' unit.log && grep -q '^ℹ skipped 0$' unit.log
       - name: Catalog gate (48 problems / 18 patterns / provenance; every reference executed on every stored case; brute oracles; wrong baselines must fail; generated artifacts current)
         run: |
           set -o pipefail
@@ -87,6 +87,11 @@ jobs:
           mkdir -p test-results
           MECODE_REAL_DOCKER=1 npm run test:integration 2>&1 | tee test-results/integration.log
           grep -q '^ℹ tests 6$' test-results/integration.log && grep -q '^ℹ pass 6$' test-results/integration.log && grep -q '^ℹ skipped 0$' test-results/integration.log
+      - name: Focused REAL Docker lifecycle (create/start split; stop at earliest startup; 2 tests, no skips)
+        run: |
+          set -o pipefail
+          MECODE_REAL_DOCKER=1 node --test --test-concurrency=1 tests/integration/t31-lifecycle-docker.test.cjs 2>&1 | tee test-results/t31-lifecycle-docker.log
+          grep -q '^ℹ tests 2$' test-results/t31-lifecycle-docker.log && grep -q '^ℹ pass 2$' test-results/t31-lifecycle-docker.log && grep -q '^ℹ skipped 0$' test-results/t31-lifecycle-docker.log
       - name: Leak probe (diagnostic only, never fails) before 'Catalog gate failure-path cleanup'
         if: always()
         run: node scripts/leak-probe.cjs 'before Catalog gate failure-path cleanup'
@@ -189,8 +194,10 @@ jobs:
         include:
           - os: windows-2022
             archive: windows.zip
+            smoke_flag: ''
           - os: macos-14
             archive: macos.tar.gz
+            smoke_flag: '--docker-unavailable-smoke'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -205,7 +212,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          node scripts/verify-archives.cjs --run "$(ls dist/platform/*-${{ matrix.archive }})" 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g'
+          node scripts/verify-archives.cjs --run "$(ls dist/platform/*-${{ matrix.archive }})" ${{ matrix.smoke_flag }} 2>&1 | sed -E 's/#s=[0-9a-f]{16,}/#s=REDACTED/g'
       - name: Hashes and manifest summary (logged only; archives are discarded with the runner)
         shell: bash
         run: cat dist/platform/SHA256SUMS

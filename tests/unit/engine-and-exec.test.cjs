@@ -51,7 +51,7 @@ const dockerOk =
     log.push(args.join(' '));
     if (args[0] === 'inspect') return { code: 0, stdout: `${oom}\n`, stderr: '' };
     if (args[0] === 'ps') return { code: 0, stdout: args.join(' ').includes('name=^') ? leftover : '', stderr: '' };
-    return { code: 0, stdout: 'x\n', stderr: '' };
+    return { code: 0, stdout: args[0] === 'create' ? `${'ab'.repeat(32)}\n` : 'x\n', stderr: '' };
   };
 
 async function rig(script, dockerFn = dockerOk()) {

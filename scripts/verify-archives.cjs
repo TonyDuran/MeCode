@@ -5,7 +5,9 @@
 //                               POSIX launchers, source revision in the manifest equals the checked-out HEAD.
 //   --run <archive>           : extract that archive to a fresh temp dir and exercise it: launcher start-up (server serves the UI shell and
 //                               prints a launch link to a private file), and with --unit also the shipped unit tests.
-// Usage: node scripts/verify-archives.cjs [--run <archive-path>] [--unit] [--extract-to <dir>]
+// Usage: node scripts/verify-archives.cjs [--run <archive-path>] [--unit] [--extract-to <dir>] [--docker-unavailable-smoke]
+//   --docker-unavailable-smoke : ONLY for the native no-engine fixture jobs (hosted macOS): Docker is recorded unavailable BEFORE launch, then exit 3 is
+//                                accepted with container removal reported NOT ASSERTED. Default is strict (exit 0 + confirmed owned-container absence).
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -13,11 +15,12 @@ const crypto = require('node:crypto');
 const cp = require('node:child_process');
 const { readTarGz, readZip } = require('./lib/archive.cjs');
 const { entryProblem, destinationUnder } = require('./lib/safe-path.cjs');
-const { trackExit, stopLauncher, readInstallId, awaitInstallContainersAbsent } = require('./lib/launcher-stop.cjs');
+const { trackExit, teardownLauncher, defaultProbe, readInstallId } = require('./lib/launcher-stop.cjs');
 
 const root = path.join(__dirname, '..');
 const argv = process.argv;
 const argAt = (/** @type {string} */ k) => (argv.indexOf(k) > 0 ? argv[argv.indexOf(k) + 1] : undefined);
+const unavailableSmoke = argv.includes('--docker-unavailable-smoke');
 const dirArg = argAt('--dir');
 const dir = dirArg ? path.resolve(dirArg) : path.join(root, 'dist', 'platform');
 const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
@@ -132,6 +135,10 @@ async function runArchive(file, wantUnit, keepIn) {
     console.log(`LAUNCHER-SKIPPED ${base}: archive is for ${osName} but this host is ${process.platform}`);
     return;
   }
+  // Docker state is recorded BEFORE launch (POSIX); the explicit unavailable-smoke policy depends on it, nothing is inferred at teardown.
+  const dockerBefore = process.platform === 'win32' ? null : defaultProbe();
+  if (process.platform !== 'win32')
+    console.log(`LAUNCHER-DOCKER-BEFORE ${base}: docker ${dockerBefore ? 'answered' : 'did NOT answer'}; mode=${unavailableSmoke ? 'explicit-unavailable-smoke' : 'strict-default'}`);
   const child = cp.spawn(launcher[0], launcher[1], {
     cwd: appDir,
     env: { ...process.env, MECODE_USER_DATA: data, MECODE_LAUNCH_FILE: launchFile },
@@ -168,24 +175,21 @@ async function runArchive(file, wantUnit, keepIn) {
       await new Promise((r) => setTimeout(r, 1500));
     } else {
       const installId = readInstallId(data);
-      const dockerUp = cp.spawnSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8', timeout: 20000 }).status === 0;
-      // The server exits 3 when it cannot CONFIRM engine-container removal. Without any Docker on this host nothing could have been started, so 3 is
-      // expected there (hosted macOS/Windows archive jobs); with a working Docker only a clean 0 is accepted.
-      const st = await stopLauncher(child, tracker, { okCodes: dockerUp ? [0] : [0, 3] });
+      const t = await teardownLauncher(child, tracker, { unavailableSmoke, dockerBefore, installId });
+      const st = t.st;
       console.log(
         `LAUNCHER-STOP ${base}: exited=${st.exited} code=${st.exitCode} signal=${st.signal} groupGone=${st.groupGone} escalated=${st.escalated} waited=${st.elapsedMs}ms installId=${installId || 'unknown'}`,
       );
-      for (const p of st.problems) bad(`${base}: ${p}`);
-      if (!dockerUp) console.log(`LAUNCHER-CONTAINERS ${base}: Docker did not answer; owned-container absence not asserted here (nothing could have been started)`);
+      const c = t.containers;
+      if (c.mode === 'not-asserted') console.log(`LAUNCHER-CONTAINERS ${base}: NOT ASSERTED (explicit unavailable-Docker smoke; Docker unanswered before launch; no engine claim)`);
       else {
-        const c = await awaitInstallContainersAbsent(installId);
         console.log(`LAUNCHER-CONTAINERS ${base}: installId=${installId || 'unknown'} checked=${c.checked} absent=${c.absent}${c.reason ? ` reason=${JSON.stringify(c.reason)}` : ''}`);
         for (const r of c.rows)
           console.log(
             `LAUNCHER-CONTAINERS-LEFT id=${r.id.slice(0, 12)} name=${r.names} state=${r.state} status=${JSON.stringify(r.status)} created=${JSON.stringify(r.createdAt)} image=${r.image} labels=${JSON.stringify(r.labels)}`,
           );
-        if (!c.absent) bad(`${base}: install-owned containers not confirmed absent after launcher stop (${c.reason})`);
       }
+      for (const p of t.problems) bad(`${base}: ${p}`);
     }
     if (!keepIn) fs.rmSync(tmp, { recursive: true, force: true });
   }
