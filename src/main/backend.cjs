@@ -72,7 +72,26 @@ function buildCreateArgs(o) {
  * Resolves { code, stdout, stderr, timedOut, error }. code<0 or timedOut => the daemon outcome is UNKNOWN (never "not created").
  */
 const liveCreates = new Set();
+/** task-owned non-create CLI children (version/image/ps/inspect/rm/kill). Node's execFile timeout timer dies with the parent, so the handle is
+ * retained and killed on abort AND on parent exit; the timeout alone can never promise child termination after process.exit. */
+const liveExecs = new Set();
+/** per abort signal: promises that settle when each exec child has actually closed (lets stop await bounded termination) */
+const execSettled = new WeakMap();
 let exitHookInstalled = false;
+function installExitHook() {
+  if (exitHookInstalled) return;
+  exitHookInstalled = true;
+  process.on('exit', () => {
+    for (const c of liveCreates) killGroup(c);
+    for (const c of liveExecs) {
+      try {
+        c.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  });
+}
 function killGroup(child) {
   try {
     if (process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL');
@@ -86,12 +105,7 @@ function killGroup(child) {
   }
 }
 function dockerCreateDetached(args, timeoutMs, bin = 'docker', signal = undefined) {
-  if (!exitHookInstalled) {
-    exitHookInstalled = true;
-    process.on('exit', () => {
-      for (const c of liveCreates) killGroup(c);
-    });
-  }
+  installExitHook();
   return new Promise((resolve) => {
     let done = false;
     let stdout = '';
@@ -132,11 +146,38 @@ function dockerCreateDetached(args, timeoutMs, bin = 'docker', signal = undefine
   });
 }
 
-function dockerExec(args, timeoutMs) {
+/** Bounded read-only/removal Docker CLI call. Optional `signal`: abort => SIGKILL the retained child; never launched once aborted. */
+function dockerExec(args, timeoutMs, bin = 'docker', signal = undefined) {
+  installExitHook();
   return new Promise((resolve) => {
-    cp.execFile('docker', args, { timeout: timeoutMs, maxBuffer: 1 << 20, encoding: 'utf8' }, (err, stdout, stderr) => {
+    if (signal && signal.aborted) return resolve({ code: -1, stdout: '', stderr: '', error: 'aborted before launch' });
+    let child;
+    let onAbort;
+    let closed;
+    const closedP = new Promise((r) => (closed = r));
+    if (signal) {
+      let set = execSettled.get(signal);
+      if (!set) execSettled.set(signal, (set = new Set()));
+      set.add(closedP);
+      closedP.then(() => set.delete(closedP));
+    }
+    child = cp.execFile(bin, args, { timeout: timeoutMs, maxBuffer: 1 << 20, encoding: 'utf8' }, (err, stdout, stderr) => {
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+      liveExecs.delete(child);
+      closed();
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout, stderr, error: err ? err.message : null });
     });
+    liveExecs.add(child);
+    if (signal) {
+      onAbort = () => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* already gone */
+        }
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
   });
 }
 
@@ -229,6 +270,8 @@ class Backend extends EventEmitter {
     })();
     /** aborted at stop-budget expiry: terminates task-owned pending create CLIs and refuses to launch new ones */
     this._abort = new AbortController();
+    this._preAbort = new AbortController(); // aborted by stop intent: kills in-flight startup preflight children
+    this._preSig = AbortSignal.any([this._preAbort.signal, this._abort.signal]);
     this.status = { state: 'checking', languages: [] };
     this.cur = null;
     /** every worker whose container may exist (or may still be published) until its removal is confirmed; independent of cur */
@@ -330,14 +373,14 @@ class Backend extends EventEmitter {
     return this.starting;
   }
   /** Docker call under the single stop budget. Before stop: a plain call. After stop intent: capped by the REMAINING budget, never issued once spent. */
-  _dk(args, cap) {
-    if (this.stopDeadline === null) return Promise.resolve().then(() => this.docker(args, cap));
+  _dk(args, cap, sig = this._abort.signal) {
+    if (this.stopDeadline === null) return Promise.resolve().then(() => this.docker(args, cap, undefined, sig));
     const ms = Math.min(cap, this.stopDeadline - Date.now());
     if (this.expired || ms <= 0) return Promise.resolve(BUDGET_SPENT);
     return new Promise((resolve) => {
       const timer = setTimeout(() => resolve(BUDGET_SPENT), ms);
       Promise.resolve()
-        .then(() => this.docker(args, ms))
+        .then(() => this.docker(args, ms, undefined, sig))
         .then(
           (r) => {
             clearTimeout(timer);
@@ -352,7 +395,16 @@ class Backend extends EventEmitter {
   }
   /** Startup preflight: like _dk, but a stop request cancels it immediately (the caller re-checks this.stopped before using the result). */
   _pre(args, cap) {
-    return Promise.race([this._dk(args, cap), this._stopSig.promise.then(() => STOP_CANCELLED)]);
+    return Promise.race([this._dk(args, cap, this._preSig), this._stopSig.promise.then(() => STOP_CANCELLED)]);
+  }
+  /** Wait (bounded by the remaining stop budget, max 1 s) until every aborted startup-preflight CLI child has closed. Fakes register none. */
+  async _preSettled() {
+    const set = execSettled.get(this._preSig);
+    if (!set || !set.size) return;
+    const ms = Math.max(0, Math.min(1000, this.stopDeadline - Date.now()));
+    let t;
+    await Promise.race([Promise.all([...set]), new Promise((r) => (t = setTimeout(r, ms)))]);
+    clearTimeout(t);
   }
   /** @param {boolean} [cancellable] startup sweeps are cancelled by stop intent; the shutdown sweep never is (strict final absence). */
   async _sweepStale(cancellable = false) {
@@ -398,6 +450,8 @@ class Backend extends EventEmitter {
     if (this.stopped) return this.getStatus();
     const limits = this.limits;
     this._set('starting', { imageId });
+    // _set emits synchronously: an observer may have called stop() inside it. Re-check BEFORE allocating a worker or issuing create.
+    if (this.stopped) return this.getStatus();
     const name = `mecode-${this.installId.slice(0, 8)}-${crypto.randomBytes(4).toString('hex')}`;
     const w = { name, child: null, buf: '', frames: [], sizes: [], qBytes: 0, waiter: null, exited: false, stderr: '', limits, createState: 'none', id: null, createError: '' };
     this.workers.add(w); // retained from BEFORE the create request until removal is confirmed (survives cur being cleared)
@@ -408,7 +462,7 @@ class Backend extends EventEmitter {
     let cr;
     let createTimer;
     try {
-      // No await exists between the `if (this.stopped) return` after the preflights and this synchronous runner call: nothing is created after stop intent.
+      // No await and no synchronous observer callback exists between the `if (this.stopped) return` after _set('starting') and this runner call: nothing is created after stop intent.
       // The runner enforces createMs itself; this outer bound only guards an injected/misbehaving runner so shutdown stays bounded (never "not created").
       // The runner is invoked SYNCHRONOUSLY (no await between the gate above and the call); the abort signal terminates a pending create CLI at stop-budget expiry.
       const bound = new Promise((res) => {
@@ -688,7 +742,9 @@ class Backend extends EventEmitter {
     this.stopped = true;
     this.stopDeadline = Date.now() + this.stopMs;
     this._stopSig.resolve(); // cancels in-flight startup preflights; _start re-checks `stopped` before every further step and before create
+    this._preAbort.abort(); // ...and SIGKILLs their retained CLI children (a timeout timer would die with the parent)
     const work = (async () => {
+      await this._preSettled(); // bounded wait for the killed children to actually close
       if (this.runCtl) this.runCtl.cancelled = true;
       if (this.starting && this.cur) this._kill(this.cur); // a worker spawned during startup is killed NOW, not after readyMs
       if (this.status.state !== 'busy') this._set('stopping', { imageId: this.status.imageId });
@@ -943,4 +999,4 @@ class Backend extends EventEmitter {
   }
 }
 
-module.exports = { Backend, buildRunArgs, buildCreateArgs, dockerCreateDetached, validateLimits, controlsMatch, DEFAULT_LIMITS, RANGES };
+module.exports = { Backend, buildRunArgs, buildCreateArgs, dockerCreateDetached, dockerExec, validateLimits, controlsMatch, DEFAULT_LIMITS, RANGES };
