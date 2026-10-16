@@ -42,7 +42,17 @@ launcher start-up checks in CI (no Docker run). CI builds and discards these arc
 
 ## T27 additions (accepted solutions + offline provisioning)
 
-- Unit gate is now 126 tests (120 are shipped in the archives; `tests/unit/t27-provision.test.cjs` is a dev-only POSIX fake-docker mock test and is excluded from archives).
+- Unit gate was 126 tests at T27 (the earlier text said 120 shipped; the extracted-package run actually enumerated 110).
 - `npm run test:e2e` also runs `tests/e2e/accepted-gui.test.cjs` (real Chrome + real server + real engine: accepted submit, wrong draft saved, restart, explicit "Load accepted solution").
 - `scripts/verify-offline.cjs` (dev-only, real Docker) runs after the Linux archive is built: export under a task-owned alias, remove only that alias tag, fresh extracted package and fresh data, missing-image state, verified import, Retry, four real accepted submissions. Evidence is scoped to the app/browser, not whole-host isolation. Nothing is uploaded; only failure-time text/screenshots follow the existing 3-day policy.
 - Historical rootful d9 cleanup race: still an unresolved residual; none of these gates claims to fix it.
+
+## T29 repairs (after the T28 review)
+
+- Unit gate is now 139 tests; the extracted package runs 111 (dev-only tests excluded from archives: t13-archive-verify, t18-catalog-gate, t27-provision, t29-launcher-stop, t29-wrong-baseline). Counts follow the actual enumeration (`node --test tests/unit/*.test.cjs`), not an estimate.
+- Provisioning import inspects the `docker save` tar BEFORE `docker load` and fails closed unless there is exactly one regular `manifest.json` whose every entry has a nonempty RepoTags consisting only of the alias (an optional `index.json`/`repositories` may not name another tag). It also checks the recorded platform INCLUDING variant on the already-present and post-load paths. Scope: tag-overwrite protection for an honest export, not publisher authentication or a same-user security boundary; no native ARM/Windows/macOS execution is claimed.
+- `acceptedAt` must be a real ISO-8601 UTC instant; a bad value in the primary state falls back to the backup like any other invalid state.
+- The renderer re-derives the ACCEPTED qualification on every render from the exact text it submitted (private to the page); a late result, edit, save or navigate away/back never shows a bare ACCEPTED for a different buffer.
+- `catalog-dev` wrong baseline `dock-pairing` still counts INDEX pairs (so it stays wrong against the distinct-weight-pair reference) but uses linear frequency accumulation; timeouts, limits, case sizes and the FULL 111 gate are unchanged.
+- `scripts/verify-archives.cjs` now awaits the launcher process group it spawned (bounded; SIGTERM, then SIGKILL escalation reported as a failure), keeps the exit status, and asserts that containers carrying that install's label are gone (`scripts/lib/launcher-stop.cjs`). `scripts/leak-probe.cjs` prints bounded id/name/state/status/created/image/labels at each probe boundary. The final global "No task-owned containers left" assertion is unchanged; the owner of the earlier hosted leftover (run 38851020710) is still UNKNOWN.
+- `scripts/verify-offline.cjs` checks non-loopback browser requests after the whole four-language flow.
