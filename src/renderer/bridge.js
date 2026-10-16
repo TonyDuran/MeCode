@@ -1,6 +1,10 @@
 'use strict';
 // Browser bridge: exposes the same promise/envelope API as the Electron preload (window.mecode) over the local-web server.
 // The session capability arrives once in the launch-link fragment, is moved into sessionStorage and scrubbed from the URL.
+// INTENTIONAL DECISION (T06, for reviewer): sessionStorage keeps the token across a tab REFRESH (T03 asked for memory-only + relaunch link).
+// Why acceptable: the token is per-tab (not shared across tabs/origins), never in a cookie/URL/storage that other origins read, CSP forbids
+// inline/foreign script, and it is a fresh random 256-bit secret on EVERY server start, so a stale tab/restart rotates it. There is no
+// public token endpoint. Closing the tab discards it. If review wants memory-only, delete the two sessionStorage calls below.
 (() => {
   if (window.mecode) return; // Electron preload already provided it
   const m = /^#s=([0-9a-f]{64})$/.exec(location.hash);

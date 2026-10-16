@@ -12,25 +12,77 @@ const API = ['catalog.list', 'catalog.get', 'packs.import', 'packs.reload', 'dra
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const SEC = { 'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'Cross-Origin-Resource-Policy': 'same-origin', 'X-Frame-Options': 'DENY' };
 
+const LOCK_NAME = 'server.lock';
+const lockErr = (message) => { const err = new Error(message); err.code = 'LOCKED'; return err; };
+function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; } }
+/** Complete lock record, or null when unreadable/incomplete/ambiguous (callers then FAIL CLOSED; never delete). */
+function readLock(f) {
+  let raw; try { raw = fs.readFileSync(f, 'utf8'); } catch (e) { return e.code === 'ENOENT' ? { missing: true } : null; }
+  let o; try { o = JSON.parse(raw); } catch { return null; }
+  if (!o || typeof o !== 'object' || !Number.isInteger(o.pid) || o.pid <= 0 || (o.nonce !== undefined && (typeof o.nonce !== 'string' || o.nonce.length > 64))) return null;
+  return { pid: o.pid, nonce: o.nonce };
+}
+/** Publish a COMPLETE record atomically: write a private temp file, then link() it into place (fails with EEXIST if taken). */
+function publish(target, rec) {
+  const tmp = `${target}.${process.pid}.${rec.nonce}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(rec), { flag: 'wx', mode: 0o600 });
+  try { fs.linkSync(tmp, target); } finally { try { fs.unlinkSync(tmp); } catch { /* ignore */ } }
+}
+const sameOwner = (a, b) => a && b && a.pid === b.pid && a.nonce === b.nonce;
+function unlinkIfOwner(file, mine) { const cur = readLock(file); if (cur && !cur.missing && sameOwner(cur, mine)) { try { fs.unlinkSync(file); return true; } catch { /* ignore */ } } return false; }
+
+/** Ownership-safe data-dir lock. Returns {file,pid,nonce}. Throws code LOCKED when held, incomplete or contended (fails closed). */
 function acquireLock(userData) {
-  const f = path.join(userData, 'server.lock');
-  fs.mkdirSync(userData, { recursive: true });
-  for (let i = 0; i < 2; i++) {
-    try { const fd = fs.openSync(f, 'wx', 0o600); fs.writeSync(fd, JSON.stringify({ pid: process.pid })); fs.closeSync(fd); return f; } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      let pid = 0; try { pid = JSON.parse(fs.readFileSync(f, 'utf8')).pid; } catch { /* corrupt lock */ }
-      let alive = false; try { if (Number.isInteger(pid) && pid > 0) { process.kill(pid, 0); alive = true; } } catch (err) { alive = err.code === 'EPERM'; }
-      if (alive) { const err = new Error(`data directory is in use by another MeCode server (pid ${pid}); stop it first`); err.code = 'LOCKED'; throw err; }
-      fs.rmSync(f, { force: true }); // stale lock from a dead process
-    }
-  }
-  throw new Error('could not acquire data-dir lock');
+  fs.mkdirSync(path.dirname(userData), { recursive: true });
+  try { fs.mkdirSync(userData, { mode: 0o700 }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+  const st = fs.lstatSync(userData); if (st.isSymbolicLink() || !st.isDirectory()) throw new Error('data directory must be a real directory (symlinks are refused)');
+  const file = path.join(userData, LOCK_NAME); const mine = { pid: process.pid, nonce: crypto.randomBytes(16).toString('hex') };
+  try { publish(file, mine); return { file, ...mine }; } catch (e) { if (e.code !== 'EEXIST') throw e; }
+  const seen = readLock(file);
+  if (seen && seen.missing) { try { publish(file, mine); return { file, ...mine }; } catch (e) { if (e.code === 'EEXIST') throw lockErr('data directory lock is contended; try again'); throw e; } }
+  if (!seen) throw lockErr(`${LOCK_NAME} is incomplete or unreadable; not removing it automatically. If no MeCode server is running, delete ${file} yourself`);
+  if (pidAlive(seen.pid)) throw lockErr(`data directory is in use by another MeCode server (pid ${seen.pid}); stop it first`);
+  // stale owner: takeover is serialized by a second exclusive lock so two reclaimers can never delete each other's replacement
+  const reclaim = path.join(userData, `${LOCK_NAME}.reclaim`);
+  try { publish(reclaim, mine); } catch (e) { if (e.code === 'EEXIST') throw lockErr(`another process is reclaiming the lock (or crashed doing so); if none is running delete ${reclaim}`); throw e; }
+  try {
+    const again = readLock(file);
+    if (!again || again.missing || !sameOwner(again, seen) || pidAlive(again.pid)) throw lockErr('data directory lock changed while reclaiming; try again');
+    fs.unlinkSync(file);
+    try { publish(file, mine); } catch (e) { if (e.code === 'EEXIST') throw lockErr('data directory lock was taken by another process'); throw e; }
+    return { file, ...mine };
+  } finally { unlinkIfOwner(reclaim, mine); }
+}
+/** Remove the lock only if it is still OUR record. */
+function releaseLock(lock) { if (lock) unlinkIfOwner(lock.file, lock); }
+
+/** Create/replace a secret file: never follows a symlink, ends up regular with mode 0600. */
+function writeSecretFile(file, text) {
+  let st = null; try { st = fs.lstatSync(file); } catch (e) { if (e.code !== 'ENOENT') throw new Error(`launch file not writable: ${e.code}`); }
+  if (st && !st.isFile()) throw new Error('launch file path is not a regular file (symlinks are refused)');
+  const tmp = `${file}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  let fd;
+  try {
+    fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    fs.writeSync(fd, text); fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined;
+    fs.renameSync(tmp, file);
+  } catch (e) { try { if (fd !== undefined) fs.closeSync(fd); } catch { /* ignore */ } try { fs.unlinkSync(tmp); } catch { /* ignore */ } throw new Error(`launch file not writable: ${e.code || 'error'}`); }
 }
 
-async function startWeb({ userData, appRoot, port = 0, backendOpts = {}, autostart = true, launchFile = null, image }) {
-  const lockFile = acquireLock(userData);
-  let services;
-  try { services = await createServices({ userData, appRoot, backendOpts, autostart, image }); } catch (e) { fs.rmSync(lockFile, { force: true }); throw e; }
+/** Everything after the lock is guarded: on ANY startup failure stop owned services/listener and release only OUR lock. */
+async function startWeb(opts) {
+  const lock = acquireLock(opts.userData);
+  const own = { services: null, server: null };
+  try { return await startLocked(opts, lock, own); } catch (e) {
+    try { if (own.server && own.server.listening) await new Promise((resolve) => { own.server.close(() => resolve()); own.server.closeAllConnections(); }); } catch { /* ignore */ }
+    try { if (own.services) await own.services.shutdown(); } catch { /* ignore */ }
+    releaseLock(lock);
+    throw e;
+  }
+}
+
+async function startLocked({ userData, appRoot, port = 0, backendOpts = {}, autostart = true, launchFile = null, image }, lock, own) {
+  const services = await createServices({ userData, appRoot, backendOpts, autostart, image }); own.services = services;
   const rdir = path.join(appRoot, 'src', 'renderer');
   const assets = new Map();
   for (const [url, [file, type]] of Object.entries(ASSETS)) assets.set(url, { body: fs.readFileSync(path.join(rdir, file)), type });
@@ -80,21 +132,23 @@ async function startWeb({ userData, appRoot, port = 0, backendOpts = {}, autosta
       send(res, 200, out);
     });
   });
+  own.server = server;
   server.headersTimeout = 10000; server.requestTimeout = 30000; server.keepAliveTimeout = 5000; server.maxHeadersCount = 50;
   server.on('clientError', (err, sock) => { try { sock.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); } catch { /* ignore */ } });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen({ host: '127.0.0.1', port, exclusive: true }, resolve); });
   const actual = server.address().port;
   origin = `http://127.0.0.1:${actual}`; hostHeader = `127.0.0.1:${actual}`;
   const launchUrl = `${origin}/#s=${token}`;
-  if (launchFile) fs.writeFileSync(launchFile, `${launchUrl}\n`, { mode: 0o600 });
+  let wroteLaunch = false;
+  if (launchFile) { writeSecretFile(launchFile, `${launchUrl}\n`); wroteLaunch = true; }
 
   function close() {
     if (closing) return closing;
     closing = (async () => {
       const r = await services.shutdown();                 // 1) stop backend: no new workers, owned containers removed
       await new Promise((resolve) => { server.close(() => resolve()); server.closeAllConnections(); }); // 2) stop listening
-      fs.rmSync(lockFile, { force: true });
-      if (launchFile) fs.rmSync(launchFile, { force: true });
+      releaseLock(lock);
+      if (wroteLaunch) { try { if (fs.lstatSync(launchFile).isFile()) fs.unlinkSync(launchFile); } catch { /* ignore */ } }
       return r;
     })();
     return closing;
@@ -102,7 +156,7 @@ async function startWeb({ userData, appRoot, port = 0, backendOpts = {}, autosta
   return { origin, port: actual, token, launchUrl, services, close, server, dataDir: userData };
 }
 
-module.exports = { startWeb, API, ASSETS, CSP };
+module.exports = { startWeb, acquireLock, releaseLock, API, ASSETS, CSP };
 
 if (require.main === module) {
   const appRoot = path.join(__dirname, '..', '..');

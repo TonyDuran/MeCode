@@ -4,7 +4,19 @@ const $ = (id) => document.getElementById(id);
 const api = window.mecode;
 const LANGS = { python: 'Python 3', javascript: 'JavaScript', cpp: 'C++17', c: 'C17' };
 // gen: bumped on every editor-context change; async completions compare against it (P1-7)
-const S = { catalog: null, key: null, prob: null, lang: 'python', gen: 0, dirty: false, saving: null, saveTimer: null, job: null, starting: false, backend: null, loadFailed: false, revs: new Map(), settingsLoaded: false };
+const S = { catalog: null, key: null, prob: null, lang: 'python', gen: 0, trans: false, dirty: false, saving: null, saveTimer: null, job: null, starting: false, backend: null, loadFailed: false, revs: new Map(), settingsLoaded: false };
+
+/** R2: single place that decides what the user may do. During a context transition (navigation / language change) or a start request
+ *  the editor, language, Save and Run are NOT usable, so a buffer can never be edited, saved or run under the wrong key/language. */
+function canRunNow() { return !!(S.backend && S.backend.state === 'ready' && !S.job && !S.starting && !S.trans && S.prob && !S.loadFailed); }
+function syncControls() {
+  $('editor').disabled = !!(S.trans || S.starting || S.loadFailed);
+  $('lang').disabled = !!S.trans;
+  $('save').disabled = !!(S.trans || S.loadFailed || !S.prob);
+  const can = canRunNow();
+  for (const id of ['runEx', 'runCustom', 'submit']) $(id).disabled = !can;
+  $('cancel').disabled = !S.job;
+}
 
 function banner(msg) { const b = $('banner'); b.hidden = !msg; b.textContent = msg || ''; }
 function errText(e) {
@@ -22,9 +34,7 @@ async function refreshBackend() {
   S.backend = r.value; const v = r.value;
   $('backend').textContent = `backend: ${v.state}` + (v.reason ? ` — ${v.reason}` : '') + (v.state === 'ready' ? ` (${v.languages.map((l) => `${l.id} ${l.version}`).join(', ')})` : '');
   $('retry').hidden = v.state !== 'unavailable';
-  const canRun = v.state === 'ready' && !S.job && !S.starting && S.prob && !S.loadFailed;
-  for (const id of ['runEx', 'runCustom', 'submit']) $(id).disabled = !canRun;
-  $('cancel').disabled = !S.job;
+  syncControls();
 }
 
 function renderList() {
@@ -58,58 +68,73 @@ function flushSave() {
   clearTimeout(S.saveTimer);
   const run = async () => {
     if (!S.prob || !S.dirty || S.loadFailed) return true;
-    const key = S.key, lang = S.lang, gen = S.gen, source = $('editor').value;
+    const key = S.key, lang = S.lang, source = $('editor').value;
     $('saveState').textContent = 'saving…';
     const r = await api.draft.save({ key, language: lang, source, baseRevision: revFor(key, lang) });
+    const same = S.key === key && S.lang === lang; // identity of the buffer, not a navigation counter
     if (r.ok) {
       S.revs.set(`${key}|${lang}`, r.value.revision);
-      if (S.gen === gen && $('editor').value === source) { S.dirty = false; $('saveState').textContent = `saved (rev ${r.value.revision})`; return true; }
-      if (S.gen === gen) return run(); // typed more while saving
+      if (same && $('editor').value === source) { S.dirty = false; $('saveState').textContent = `saved (rev ${r.value.revision})`; return true; }
+      if (same) return run(); // typed more while saving
       return true;
     }
     S.dirty = true;
-    $('saveState').textContent = `SAVE FAILED (draft kept in editor): ${errText(r.error)}`;
+    if (same) $('saveState').textContent = `SAVE FAILED (draft kept in editor): ${errText(r.error)}`;
     return false;
   };
   S.saving = (S.saving || Promise.resolve(true)).then(run, run); // serialized; a failed save never poisons the chain
   return S.saving;
 }
 
-async function openProblem(key) {
-  if (!(await flushSave())) return;
-  const gen = ++S.gen;
-  const r = await api.catalog.get({ key });
-  if (gen !== S.gen) return; // a newer navigation won
-  if (!r.ok) { banner(errText(r.error)); return; }
-  S.key = key; S.prob = r.value; S.loadFailed = false;
+/** Transition lifecycle: the old context is saved FIRST, controls lock before the first await, the new context is adopted atomically. */
+function beginTrans() { S.trans = true; syncControls(); }
+function endTrans() { S.trans = false; syncControls(); }
+
+function renderProblem(p) {
   $('work').hidden = false;
-  $('title').textContent = r.value.title;
-  $('meta').textContent = `${r.value.difficulty} · ${r.value.patterns.join(', ')} · ${r.value.provenance.kind} (${r.value.provenance.license}) · tests: ${r.value.examples.length} examples + ${r.value.checkCount} checks · hash ${r.value.contentHash.slice(0, 12)}`;
-  $('statement').textContent = r.value.statement;
-  $('formats').textContent = `Input:\n${r.value.inputFormat}\n\nOutput:\n${r.value.outputFormat}\n\nConstraints:\n- ${r.value.constraints.join('\n- ')}`;
+  $('title').textContent = p.title;
+  $('meta').textContent = `${p.difficulty} · ${p.patterns.join(', ')} · ${p.provenance.kind} (${p.provenance.license}) · tests: ${p.examples.length} examples + ${p.checkCount} checks · hash ${p.contentHash.slice(0, 12)}`;
+  $('statement').textContent = p.statement;
+  $('formats').textContent = `Input:\n${p.inputFormat}\n\nOutput:\n${p.outputFormat}\n\nConstraints:\n- ${p.constraints.join('\n- ')}`;
   const ex = $('examples'); ex.replaceChildren();
-  for (const t of r.value.examples) { const p = document.createElement('pre'); p.textContent = `Example ${t.id}\nstdin:\n${t.stdin}\nexpected:\n${t.expected}` + (t.explanation ? `\n${t.explanation}` : ''); ex.append(p); }
+  for (const t of p.examples) { const pre = document.createElement('pre'); pre.textContent = `Example ${t.id}\nstdin:\n${t.stdin}\nexpected:\n${t.expected}` + (t.explanation ? `\n${t.explanation}` : ''); ex.append(pre); }
   const sel = $('lang'); sel.replaceChildren();
   for (const l of Object.keys(LANGS)) { const o = document.createElement('option'); o.value = l; o.textContent = LANGS[l]; sel.append(o); }
-  const first = Object.keys(r.value.starters)[0] || 'python';
-  S.lang = Object.keys(r.value.starters).includes(S.lang) ? S.lang : first;
-  sel.value = S.lang;
-  await loadDraft(gen);
-  if (gen !== S.gen) return;
-  paintStoredResult();
-  renderList(); refreshBackend();
 }
 
-async function loadDraft(gen) {
-  const key = S.key, lang = S.lang;
-  const d = await api.draft.load({ key, language: lang });
-  if (gen !== S.gen) return;
-  if (!d.ok) { // never replace an unreadable draft with a writable starter
-    S.loadFailed = true; $('editor').value = ''; $('editor').disabled = true;
+async function openProblem(key) {
+  const gen = ++S.gen; // supersedes any transition still in flight; its late responses are ignored
+  beginTrans();
+  try {
+    if (!(await flushSave())) return; // save failed: old context stays, editable, draft kept
+    if (gen !== S.gen) return;
+    const r = await api.catalog.get({ key });
+    if (gen !== S.gen) return;
+    if (!r.ok) { banner(errText(r.error)); return; } // old context stays usable
+    const starters = Object.keys(r.value.starters);
+    const lang = starters.includes(S.lang) ? S.lang : (starters[0] || 'python');
+    const d = await api.draft.load({ key, language: lang });
+    if (gen !== S.gen) return;
+    // ---- atomic adoption: key, problem, language, buffer and flags change together
+    S.key = key; S.prob = r.value; S.lang = lang;
+    renderProblem(r.value);
+    $('lang').value = lang;
+    applyDraft(key, lang, d);
+    paintStoredResult();
+    renderList();
+  } finally {
+    if (gen === S.gen) { $('lang').value = S.lang; endTrans(); refreshBackend(); }
+  }
+}
+
+/** Never replace an unreadable draft with a writable starter. */
+function applyDraft(key, lang, d) {
+  if (!d.ok) {
+    S.loadFailed = true; $('editor').value = ''; S.dirty = false;
     $('saveState').textContent = `DRAFT LOAD FAILED (editing disabled so nothing is overwritten): ${errText(d.error)}`;
     return;
   }
-  $('editor').disabled = false; S.loadFailed = false;
+  S.loadFailed = false;
   S.revs.set(`${key}|${lang}`, d.value.revision);
   $('editor').value = d.value.source !== null ? d.value.source : (S.prob.starters[lang] || '');
   $('saveState').textContent = d.value.source !== null ? `draft restored (rev ${d.value.revision})` : 'starter template (unsaved)';
@@ -125,17 +150,21 @@ function paintStoredResult() {
 function sameContext(j) { return S.prob && j.key === S.key && j.language === S.lang && j.contentHash === S.prob.contentHash; }
 
 async function execute(mode) {
-  if (S.starting || S.job) return; // single flight
-  S.starting = true; refreshBackend();
+  if (S.trans || S.starting || S.job || !S.prob || S.loadFailed) return; // single flight; never from a half-switched context
+  S.starting = true; syncControls(); refreshBackend();
+  const key = S.key, lang = S.lang, hash = S.prob.contentHash; // the editor is locked while starting, so this context + buffer cannot change under us
+  const here = () => S.key === key && S.lang === lang && S.prob && S.prob.contentHash === hash;
+  const say = (text, cls) => { if (here()) { $('verdict').textContent = text; $('verdict').className = cls || ''; } else $('bgjob').textContent = `Run on ${key} (${lang}): ${text}`; };
   try {
-    if (!(await flushSave())) { $('verdict').textContent = 'Not run: the draft could not be saved (see Save status).'; $('verdict').className = 'INFRA_ERROR'; return; }
-    const job = { key: S.key, language: S.lang, contentHash: S.prob.contentHash, mode };
-    const r = await api.execution.start({ key: job.key, contentHash: job.contentHash, language: job.language, source: $('editor').value, mode, customInput: $('custom').value });
-    if (!r.ok) { $('verdict').textContent = `Could not start: ${errText(r.error)}`; $('verdict').className = 'INFRA_ERROR'; return; }
+    if (!(await flushSave())) { say('Not run: the draft could not be saved (see Save status).', 'INFRA_ERROR'); return; }
+    if (S.trans || !here()) { $('bgjob').textContent = `Run on ${key} (${lang}) not started: the view changed while saving.`; return; }
+    const job = { key, language: lang, contentHash: hash, mode };
+    const r = await api.execution.start({ key, contentHash: hash, language: lang, source: $('editor').value, mode, customInput: $('custom').value });
+    if (!r.ok) { say(`Could not start: ${errText(r.error)}`, 'INFRA_ERROR'); return; }
     job.jobId = r.value.jobId; S.job = job;
-    $('verdict').textContent = 'Running…'; $('verdict').className = ''; $('results').textContent = '';
-  } finally { S.starting = false; }
-  pollJob(S.job);
+    if (here()) { $('verdict').textContent = 'Running…'; $('verdict').className = ''; $('results').textContent = ''; } else $('bgjob').textContent = `Job started on ${key} (${lang}); result will be reported here.`;
+  } finally { S.starting = false; syncControls(); }
+  if (S.job) pollJob(S.job);
   refreshBackend();
 }
 
@@ -162,7 +191,7 @@ function show(res) {
   $('verdict').textContent = head;
   $('verdict').className = res.verdict;
   const lines = [];
-  if (res.compile) lines.push(`compile: ${res.compile.ok ? 'ok' : 'FAILED'}${res.compile.timedOut ? ' (timed out)' : ''}\n${res.compile.output}`);
+  if (res.compile) lines.push(`compile: ${res.compile.ok ? 'ok' : 'FAILED'}${res.compile.timedOut ? ` (timed out: ${res.compile.limit === 'job' ? 'whole-job limit' : res.compile.limit === 'compile' ? 'compile-time limit' : 'limit unknown'})` : ''}\n${res.compile.output}`);
   for (const c of res.cases) lines.push(`[${c.status}] ${c.id} exit=${c.exitCode} signal=${c.signal} ${c.elapsedMs}ms\n${c.stdout}${c.stderr ? `\nstderr: ${c.stderr}` : ''}`);
   lines.push(`cleanup: ${res.cleanup ? (res.cleanup.confirmed ? 'confirmed' : 'UNCONFIRMED') : 'n/a'}; persistence: ${res.persistence || 'n/a'}; limits: ${JSON.stringify(res.effectiveLimits)}`);
   $('results').textContent = lines.join('\n\n');
@@ -192,16 +221,23 @@ $('reload').addEventListener('click', async () => {
 $('retry').addEventListener('click', async () => { $('backend').textContent = 'backend: checking'; await api.backend.retry(); refreshBackend(); });
 $('search').addEventListener('input', () => { if (S.catalog) renderList(); });
 $('lang').addEventListener('change', async () => {
-  const want = $('lang').value;
-  if (!(await flushSave())) { $('lang').value = S.lang; return; } // keep the dirty draft; do not switch
-  const gen = ++S.gen; S.lang = want; await loadDraft(gen); if (gen === S.gen) { paintStoredResult(); refreshBackend(); }
+  if (S.trans || !S.prob) { $('lang').value = S.lang; return; }
+  const want = $('lang').value; const key = S.key; const gen = ++S.gen;
+  beginTrans();
+  try {
+    if (!(await flushSave())) return; // keep the dirty draft; do not switch
+    if (gen !== S.gen) return;
+    const d = await api.draft.load({ key, language: want });
+    if (gen !== S.gen) return;
+    S.lang = want; applyDraft(key, want, d); paintStoredResult(); // adopt language + buffer together
+  } finally { if (gen === S.gen) { $('lang').value = S.lang; endTrans(); refreshBackend(); } }
 });
-$('editor').addEventListener('input', () => { S.dirty = true; $('saveState').textContent = 'unsaved'; clearTimeout(S.saveTimer); S.saveTimer = setTimeout(flushSave, 800); });
-$('save').addEventListener('click', async () => { if (S.prob && !S.loadFailed) S.dirty = true; await flushSave(); });
+$('editor').addEventListener('input', () => { if (S.trans || S.starting || S.loadFailed || !S.prob) return; S.dirty = true; $('saveState').textContent = 'unsaved'; clearTimeout(S.saveTimer); S.saveTimer = setTimeout(flushSave, 800); });
+$('save').addEventListener('click', async () => { if (S.trans) return; if (S.prob && !S.loadFailed) S.dirty = true; await flushSave(); });
 $('runEx').addEventListener('click', () => execute('examples'));
 $('runCustom').addEventListener('click', () => execute('custom'));
 $('submit').addEventListener('click', () => execute('submit'));
-$('cancel').addEventListener('click', async () => { if (S.job) { const r = await api.execution.cancel({ jobId: S.job.jobId }); if (!r.ok) $('bgjob').textContent = errText(r.error); } });
+$('cancel').addEventListener('click', async () => { if (S.job) { $('bgjob').textContent = 'Stop requested — stopping (termination is not confirmed until the result shows cleanup: confirmed)…'; const r = await api.execution.cancel({ jobId: S.job.jobId }); if (!r.ok) $('bgjob').textContent = errText(r.error); } });
 window.addEventListener('beforeunload', (ev) => { if (S.dirty) { ev.preventDefault(); ev.returnValue = ''; } flushSave(); });
 
 // ---- settings (execution limits)
@@ -228,7 +264,7 @@ if (api.server) {
   $('quit').addEventListener('click', async () => {
     if ((S.dirty || S.job) && !window.confirm('Unsaved draft or a running job. Stop the server anyway?')) return;
     const r = await api.server.shutdown();
-    document.body.textContent = r.ok ? 'MeCode server stopped. You can close this tab.' : `Shutdown failed: ${errText(r.error)}`;
+    document.body.textContent = r.ok ? 'MeCode server is stopping (container cleanup is confirmed in the terminal that started it). You can close this tab.' : `Shutdown failed: ${errText(r.error)}`;
   });
 }
 

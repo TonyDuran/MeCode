@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { validatePack, LIMITS } = require('../shared/validate.cjs');
-const { AppError, atomicWrite } = require('./store.cjs');
+const { AppError, atomicWrite, ensureDir, leafStat, safeRead } = require('./safefs.cjs');
 
 class Catalog {
   /** @param {string} packsDir managed dir; @param {string} snapshotFile last-good snapshot */
@@ -17,20 +17,21 @@ class Catalog {
   async _seed() {
     if (!this.seedDir) return;
     const marker = path.join(path.dirname(this.packsDir), '.packs-seeded');
-    if (fs.existsSync(marker)) return;
-    await fs.promises.mkdir(this.packsDir, { recursive: true });
+    if (await leafStat(marker)) return;
+    await ensureDir(this.packsDir);
     for (const f of await fs.promises.readdir(this.seedDir)) {
       if (!f.endsWith('.json')) continue;
       const dst = path.join(this.packsDir, f);
-      if (!fs.existsSync(dst)) await fs.promises.copyFile(path.join(this.seedDir, f), dst);
+      if (!(await leafStat(dst))) await atomicWrite(dst, await fs.promises.readFile(path.join(this.seedDir, f), 'utf8'));
     }
-    await fs.promises.writeFile(marker, 'seeded\n');
+    await atomicWrite(marker, 'seeded\n');
   }
 
   /** Parse+validate a set of {name,text}. Returns {ok,packs}|{ok:false,errors}. */
   static validateSet(files) {
     const errors = []; const packs = []; const fileById = new Map(); const packIds = new Set(); const keys = new Set(); let count = 0;
-    for (const { name, text } of files) {
+    for (const { name, text, unsafe } of files) {
+      if (unsafe) { errors.push({ file: name, path: name, message: 'not a regular readable file (symlinks and special files are refused)' }); continue; }
       if (Buffer.byteLength(text, 'utf8') > LIMITS.packBytes) { errors.push({ file: name, path: name, message: 'pack exceeds 5 MiB' }); continue; }
       let raw;
       try { raw = JSON.parse(text); } catch (e) { errors.push({ file: name, path: name, message: `invalid JSON: ${e.message}` }); continue; }
@@ -47,12 +48,16 @@ class Catalog {
   }
 
   async _readDir() {
+    await ensureDir(this.packsDir, fs.promises, false); // a symlinked/non-directory packs folder is refused
     const names = (await fs.promises.readdir(this.packsDir)).filter((n) => n.endsWith('.json')).sort();
     const files = [];
     for (const name of names) {
-      const st = await fs.promises.stat(path.join(this.packsDir, name));
+      const file = path.join(this.packsDir, name);
+      let st;
+      try { st = await leafStat(file); } catch { files.push({ name, text: '', unsafe: true }); continue; } // symlink / special file: reported, never read
+      if (!st) continue;
       if (st.size > LIMITS.packBytes) { files.push({ name, text: ' '.repeat(0), tooBig: true }); continue; }
-      files.push({ name, text: await fs.promises.readFile(path.join(this.packsDir, name), 'utf8') });
+      try { files.push({ name, text: await safeRead(file, fs.promises, LIMITS.packBytes) }); } catch { files.push({ name, text: '', unsafe: true }); }
     }
     return files;
   }
@@ -66,11 +71,13 @@ class Catalog {
   /** Startup: load packs; on failure fall back to revalidated last-good snapshot with visible error. */
   init() {
     return this._serial(async () => {
-      await this._seed();
+      let seedError = null;
+      try { await this._seed(); } catch (e) { seedError = e; }
       const r = await this.reloadInner();
       if (r.ok) return r;
+      void seedError;
       try {
-        const snap = JSON.parse(await fs.promises.readFile(this.snapshotFile, 'utf8'));
+        const snap = JSON.parse(await safeRead(this.snapshotFile));
         const v = Catalog.validateSet(snap.packs.map((p, i) => ({ name: `snapshot[${i}]`, text: JSON.stringify(p) })));
         if (v.ok) { this._adopt(v.packs); this.lastError = { code: 'PACK_INVALID', message: 'managed packs invalid; using last-good snapshot', details: r.error.details }; }
       } catch { /* no usable snapshot */ }
@@ -102,15 +109,19 @@ class Catalog {
       void raw;
       const known = this.fileById.get(id);
       let name = known || `${id}.json`;
-      if (!known && fs.existsSync(path.join(this.packsDir, name))) name = `${id}-${crypto.randomBytes(3).toString('hex')}.json`; // never clobber a different pack's file
+      let clash = false; try { clash = !!(await leafStat(path.join(this.packsDir, name))); } catch { clash = true; }
+      if (!known && clash) name = `${id}-${crypto.randomBytes(3).toString('hex')}.json`; // never clobber a different pack's file
       const dst = path.join(this.packsDir, name);
       const exists = !!known;
       if (exists && !replace) return { ok: false, error: { code: 'CONFLICT', message: `pack "${id}" already exists; confirm replace` } };
       // whole-candidate validation: existing files (minus replaced) + new
-      const others = (await this._readDir()).filter((f) => f.name !== name);
+      let all;
+      try { all = await this._readDir(); } catch (e) { return { ok: false, error: { code: 'IO_ERROR', message: `cannot read packs dir: ${e.message}` } }; }
+      const others = all.filter((f) => f.name !== name);
       const whole = Catalog.validateSet([...others, { name, text: jsonText }]);
       if (!whole.ok) return { ok: false, error: { code: 'PACK_INVALID', message: 'import would make catalog invalid; nothing written', details: whole.errors.slice(0, 50) } };
-      const prev = exists ? await fs.promises.readFile(dst, 'utf8') : null;
+      let prev = null;
+      if (exists) { try { prev = await safeRead(dst); } catch (e) { return { ok: false, error: { code: 'IO_ERROR', message: `cannot read existing pack: ${e.message}` } }; } }
       let warning;
       try {
         await atomicWrite(dst, jsonText);

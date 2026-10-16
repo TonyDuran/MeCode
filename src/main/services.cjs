@@ -3,7 +3,8 @@
 // Every handler takes one plain object, validates it strictly, and returns a plain value or throws AppError.
 const path = require('node:path');
 const fs = require('node:fs');
-const { Store, AppError, atomicWrite } = require('./store.cjs');
+const { Store } = require('./store.cjs');
+const { AppError, atomicWrite, safeRead } = require('./safefs.cjs');
 const { Catalog } = require('./catalog.cjs');
 const { Backend, validateLimits } = require('./backend.cjs');
 const { Executor } = require('./exec.cjs');
@@ -31,10 +32,10 @@ const lang = (l) => { if (!LANGS.includes(l)) throw new AppError('INVALID_INPUT'
 const short = (s, n) => { if (s.length > n) throw new AppError('INVALID_INPUT', 'value too long'); return s; };
 
 async function createServices({ userData, appRoot, image = process.env.MECODE_ENGINE_IMAGE || 'mecode-engine:v2', backendOpts = {}, autostart = true }) {
-  const store = new Store(userData); await fs.promises.mkdir(userData, { recursive: true }); await store.init();
+  const store = new Store(userData); await store.init(); // confines + creates the data root
   const settingsFile = path.join(userData, 'settings.json');
   let limits = {}; let settingsWarning = null;
-  try { limits = validateLimits(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).limits); } catch (e) { if (e.code !== 'ENOENT') settingsWarning = `settings.json ignored (${String(e.message).slice(0, 120)}); defaults in use`; limits = validateLimits({}); }
+  try { limits = validateLimits(JSON.parse(await safeRead(settingsFile)).limits); } catch (e) { if (e.code !== 'ENOENT') settingsWarning = `settings.json ignored (${String(e.message).slice(0, 120)}); defaults in use`; limits = validateLimits({}); }
   const catalog = new Catalog(path.join(userData, 'packs'), path.join(userData, 'last-good.json'), { seedDir: path.join(appRoot, 'packs') });
   await catalog.init();
   const backend = new Backend({ installId: store.installId, image, limits, ...backendOpts });

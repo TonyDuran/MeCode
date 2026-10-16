@@ -23,7 +23,7 @@ class Executor {
     if (st.state !== 'ready') throw new AppError('BACKEND_UNAVAILABLE', st.reason || `backend is ${st.state}`);
     if (!st.languages.some((l) => l.id === language)) throw new AppError('BACKEND_UNAVAILABLE', `language ${language} not available in engine`);
     const tests = mode === 'custom' ? [{ id: 'custom', stdin: customInput }] : found.problem.tests.filter((t) => mode === 'submit' || t.kind === 'example').map((t) => ({ id: t.id, stdin: t.stdin, expected: t.expected }));
-    const limits = { ...this.backend.limits };
+    const limits = { ...(st.effectiveLimits || this.backend.limits) }; // enforced worker snapshot
     const jobId = crypto.randomUUID();
     const job = { jobId, key, contentHash, language, mode, sourceHash: sha(source), state: 'running', phase: 'executing', limits, result: null, settled: false };
     this.jobs.set(jobId, job); this.active = job;
